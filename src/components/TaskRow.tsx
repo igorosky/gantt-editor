@@ -2,7 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import type { GanttTask } from '../types'
 import { GANTT_ROW_HEIGHT } from '../constants'
 import { isMilestone } from '../utils'
+import { getTaskWarnings } from '../lib/warnings'
 import { DatePicker } from './DatePicker'
+import { TaskWarnings } from './TaskWarnings'
 
 interface Props {
   task: GanttTask
@@ -39,6 +41,7 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
   }
 
   const ms = isMilestone(task)
+  const warnings = getTaskWarnings(task)
 
   return (
     <div
@@ -77,6 +80,8 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
           </span>
         )}
       </div>
+
+      <TaskWarnings warnings={warnings} />
 
       <div className="task-row__dates">
         {ms ? (
