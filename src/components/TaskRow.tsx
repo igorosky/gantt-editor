@@ -91,6 +91,7 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
               value={task.end}
               onChange={d => onUpdate({ start: d, end: d })}
               title="Milestone date"
+              highlightEmpty
             />
           </>
         ) : (
@@ -99,12 +100,14 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
               value={task.start}
               onChange={d => onUpdate({ start: d, ...(task.end && d && d > task.end ? { end: d } : {}) })}
               title="Start date"
+              highlightEmpty
             />
             <span className="task-row__date-sep">→</span>
             <DatePicker
               value={task.end}
               onChange={d => onUpdate({ end: d, ...(task.start && d && d < task.start ? { start: d } : {}) })}
               title="Due date"
+              highlightEmpty
             />
           </>
         )}

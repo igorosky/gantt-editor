@@ -444,6 +444,20 @@
   border-color: #7c85f5;
 }
 
+.task-row__date-field--empty .task-row__date-input,
+.task-row__date-field--empty .task-row__date-cal {
+  border-color: #e55;
+  background: #fff0f0;
+}
+
+.task-row__date-field--empty .task-row__date-input::placeholder {
+  color: #e55;
+}
+
+.task-row__date-field--empty .task-row__date-input:focus {
+  border-color: #e55;
+}
+
 .task-row__delete {
   color: #ccc;
   font-size: 12px;

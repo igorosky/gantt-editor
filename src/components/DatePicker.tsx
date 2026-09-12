@@ -5,6 +5,7 @@ interface Props {
   onChange: (d: Date | undefined) => void
   title: string
   placeholder?: string
+  highlightEmpty?: boolean
 }
 
 function toDateDisplay(d: Date): string {
@@ -20,7 +21,7 @@ function parseDateDisplay(s: string): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
-export function DatePicker({ value, onChange, title, placeholder = 'DD.MM.YYYY' }: Props) {
+export function DatePicker({ value, onChange, title, placeholder = 'DD.MM.YYYY', highlightEmpty = false }: Props) {
   const [draft, setDraft] = useState(() => value ? toDateDisplay(value) : '')
   const hiddenRef = useRef<HTMLInputElement>(null)
 
@@ -33,8 +34,11 @@ export function DatePicker({ value, onChange, title, placeholder = 'DD.MM.YYYY' 
     onChange(d)
   }
 
+  const empty = !value
+  const emptyClass = highlightEmpty && empty ? ' task-row__date-field--empty' : ''
+
   return (
-    <div className="task-row__date-field">
+    <div className={`task-row__date-field${emptyClass}`}>
       <input
         type="text"
         className="task-row__date-input"
