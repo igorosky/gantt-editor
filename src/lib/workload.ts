@@ -8,7 +8,7 @@
 import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
 import { DAY_MS, addDays, isWorkday, startOfDay } from './dates'
-import { isDone } from './portfolio'
+import { isDone, parentIdsOf } from './portfolio'
 
 export type WorkloadMetric = 'count' | 'hours'
 
@@ -78,9 +78,15 @@ export function computeWorkload<T extends GanttTask>(
   }
   const keyTotals = new Map<string, number>()
 
-  for (const t of tasks) {
-    if (isMilestone(t)) continue
-    if (!opts.includeDone && isDone(t)) continue
+  const eligible = tasks.filter(t => !isMilestone(t) && (opts.includeDone || !isDone(t)))
+  // Tasks split into counted subtasks. The count metric skips them, so a
+  // parent and its subtasks are not counted twice; hours keep a parent's own
+  // estimate, since ClickUp estimates are per task, not rolled up.
+  const containers = parentIdsOf(eligible)
+
+  for (const t of eligible) {
+    // A parent carries nothing of its own here: not counted, or no estimate
+    if (containers.has(t.id) && (opts.metric === 'count' || !t.timeEstimate)) continue
     if (!t.start && !t.end) { result.skippedUndated.push(t.id); continue }
     if (opts.metric === 'hours' && !t.timeEstimate) { result.missingEstimate.push(t.id); continue }
 

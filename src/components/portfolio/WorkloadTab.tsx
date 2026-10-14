@@ -62,7 +62,11 @@ export function WorkloadTab({ projects, today }: Props) {
   const result = useMemo(() => computeWorkload(
     // Task ids are only unique within a project, so the engine gets a
     // project-qualified id to key drill-downs on
-    tasks.map(t => ({ ...t, id: `${t.projectId}:${t.id}` })),
+    tasks.map(t => ({
+      ...t,
+      id: `${t.projectId}:${t.id}`,
+      parentId: t.parentId && `${t.projectId}:${t.parentId}`,
+    })),
     boundaries,
     {
       metric,

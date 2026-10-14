@@ -106,6 +106,35 @@ describe('computeWorkload: hours', () => {
   })
 })
 
+describe('computeWorkload: subtasks', () => {
+  const parent = (p: Partial<GanttTask> = {}) =>
+    task({ id: 'P', start: d(10, 12), end: d(10, 30), assignees: [{ id: 1, username: 'A' }], ...p })
+  const sub = (p: Partial<GanttTask> = {}) =>
+    task({ parentId: 'P', start: d(10, 13), end: d(10, 14), assignees: [{ id: 1, username: 'A' }], ...p })
+
+  it('counts the subtasks, not their parent', () => {
+    const r = computeWorkload([parent(), sub(), sub()], WEEKS, { metric: 'count', keysOf: byAssignee })
+    expect(r.buckets.map(b => b.total)).toEqual([2, 0, 0])
+  })
+
+  it('counts a parent again once every subtask is out of scope', () => {
+    const done = sub({ statusType: 'done' })
+    expect(computeWorkload([parent(), done], WEEKS, { metric: 'count', keysOf: one })
+      .buckets.map(b => b.total)).toEqual([1, 1, 1])
+    expect(computeWorkload([parent(), done], WEEKS, { metric: 'count', keysOf: one, includeDone: true })
+      .buckets.map(b => b.total)).toEqual([1, 0, 0])
+  })
+
+  it('adds a parent\'s own estimate to its subtasks\' hours, and never flags it as missing', () => {
+    const withOwn = computeWorkload([parent({ timeEstimate: 3 * H, start: d(10, 13), end: d(10, 15) }), sub({ timeEstimate: 2 * H })],
+      WEEKS, { metric: 'hours', keysOf: one })
+    expect(withOwn.buckets[0].total).toBeCloseTo(5)
+    const none = computeWorkload([parent(), sub({ timeEstimate: 2 * H })], WEEKS, { metric: 'hours', keysOf: one })
+    expect(none.missingEstimate).toEqual([])
+    expect(none.buckets[0].total).toBeCloseTo(2)
+  })
+})
+
 describe('workdaysIn', () => {
   it('counts Monday to Friday in a half-open range', () => {
     expect(workdaysIn(d(10, 12), d(10, 19))).toBe(5)

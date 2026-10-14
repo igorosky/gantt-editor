@@ -324,6 +324,25 @@
         font-weight: 600;
     }
 
+    /* Local addition: a task with subtasks, the span of those subtasks drawn
+       under its bar, and a filter's context row (ancestor of a match) */
+    & .bar-wrapper.parent .bar {
+        fill: var(--g-parent-color);
+    }
+
+    & .bar-wrapper.parent .bar-label {
+        font-weight: 600;
+    }
+
+    & .bar-span {
+        fill: var(--g-span-color);
+        pointer-events: none;
+    }
+
+    & .bar-wrapper.context {
+        opacity: 0.45;
+    }
+
     & .bar-wrapper {
         cursor: pointer;
 

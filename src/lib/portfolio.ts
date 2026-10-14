@@ -71,6 +71,18 @@ export function hasQualityWarning(t: HealthTask): boolean {
   return (t.warningIds?.length ?? 0) > 0
 }
 
+// Ids of the tasks that have at least one subtask in the list. Such a task
+// describes its work through the subtasks, so it is not flagged as undated or
+// unassigned itself (its subtasks still are).
+export function parentIdsOf(tasks: GanttTask[]): Set<string> {
+  const ids = new Set(tasks.map(t => t.id))
+  const out = new Set<string>()
+  for (const t of tasks) {
+    if (t.parentId && t.parentId !== t.id && ids.has(t.parentId)) out.add(t.parentId)
+  }
+  return out
+}
+
 /* ---------------------------------------------------------------- health */
 
 export type Rag = 'red' | 'amber' | 'green' | 'done' | 'empty'
@@ -128,6 +140,7 @@ export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
     rag: 'empty', ragReasons: [],
   }
   const t0 = startOfDay(today)
+  const parents = parentIdsOf(tasks)
   for (const t of tasks) {
     if (isDone(t)) { h.done++; continue }
     h.open++
@@ -137,8 +150,8 @@ export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
     }
     if (isLateStart(t, today)) h.lateStart++
     if (isDueSoon(t, today)) h.dueSoon++
-    if (isUnscheduled(t)) h.unscheduled++
-    if (isUnassigned(t)) h.unassigned++
+    if (!parents.has(t.id) && isUnscheduled(t)) h.unscheduled++
+    if (!parents.has(t.id) && isUnassigned(t)) h.unassigned++
     if (hasQualityWarning(t)) h.quality++
     if (isMilestone(t) && t.end && startOfDay(t.end) >= t0 &&
         (!h.nextMilestone || t.end < h.nextMilestone.end!)) {
@@ -192,14 +205,14 @@ export interface RiskItem<T extends HealthTask = HealthTask> {
   daysLate: number
 }
 
-export function taskRisks(t: HealthTask, today: Date): RiskKind[] {
+export function taskRisks(t: HealthTask, today: Date, hasSubtasks = false): RiskKind[] {
   if (isDone(t)) return []
   const out: RiskKind[] = []
   if (isOverdue(t, today)) out.push('overdue')
   if (isLateStart(t, today)) out.push('late-start')
   if (isDueSoon(t, today)) out.push('due-soon')
-  if (isUnscheduled(t)) out.push('undated')
-  if (isUnassigned(t)) out.push('unassigned')
+  if (!hasSubtasks && isUnscheduled(t)) out.push('undated')
+  if (!hasSubtasks && isUnassigned(t)) out.push('unassigned')
   if (hasQualityWarning(t)) out.push('quality')
   return out
 }
@@ -212,8 +225,9 @@ export function riskItems<T extends HealthTask>(
 ): RiskItem<T>[] {
   const out: RiskItem<T>[] = []
   for (const p of projects) {
+    const parents = parentIdsOf(p.tasks)
     for (const t of p.tasks) {
-      const kinds = taskRisks(t, today)
+      const kinds = taskRisks(t, today, parents.has(t.id))
       if (kinds.length) out.push({ projectId: p.id, task: t, kinds, daysLate: daysLate(t, today) })
     }
   }

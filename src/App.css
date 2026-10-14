@@ -464,21 +464,6 @@
   font-weight: 600;
 }
 
-.task-row__delete {
-  color: #ccc;
-  font-size: 12px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  line-height: 1;
-  flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
-}
-
-.task-row__delete:hover {
-  color: #e55;
-  background: #fff0f0;
-}
-
 .task-row__grip {
   cursor: grab;
   color: #ccc;
@@ -498,8 +483,82 @@
   cursor: grabbing;
 }
 
-.task-row--drag-over {
-  border-top: 2px solid #7c85f5;
+/* Drop indicators while dragging a row: a line before / after the row
+   (indented to the level the task lands on), or an outline to nest inside */
+.task-row--drop-before,
+.task-row--drop-after,
+.task-row--drop-inside-first {
+  position: relative;
+}
+.task-row--drop-before::before,
+.task-row--drop-after::before,
+.task-row--drop-inside-first::before {
+  content: '';
+  position: absolute;
+  left: var(--drop-indent);
+  right: 8px;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.task-row--drop-before::before { top: -1px; }
+.task-row--drop-after::before,
+.task-row--drop-inside-first::before { bottom: -1px; }
+.task-row--drop-inside {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Subtasks: indent, collapse toggle, done/total badge, filter context rows.
+   Negative margins cancel the row's flex gap so every level steps 16px. */
+.task-row__indent {
+  flex-shrink: 0;
+  margin-right: -8px;
+}
+
+.task-row__toggle {
+  width: 16px;
+  height: 22px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  margin-right: -4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.task-row__toggle:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.task-row__toggle--leaf {
+  cursor: default;
+}
+
+.task-row--parent .task-row__name-text {
+  font-weight: 600;
+}
+
+.task-row--context {
+  opacity: 0.55;
+}
+
+.task-row__subcount {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.task-row__subcount--done {
+  color: #16a34a;
 }
 
 .task-row__ms-glyph {
@@ -1113,7 +1172,8 @@
   font-weight: 600;
 }
 
-/* Task row detail button */
+/* Task row detail button and the "more actions" menu */
+.task-row__menu-btn,
 .task-row__detail-btn {
   width: 26px;
   height: 26px;
@@ -1129,12 +1189,55 @@
   transition: opacity 0.12s, color 0.12s;
   flex-shrink: 0;
 }
-.task-row:hover .task-row__detail-btn {
+.task-row:hover .task-row__detail-btn,
+.task-row:hover .task-row__menu-btn,
+.task-row__menu-btn--open {
   opacity: 1;
 }
+.task-row__menu-btn:hover,
+.task-row__menu-btn--open,
 .task-row__detail-btn:hover {
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.row-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 230px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.row-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.row-menu__item:hover { background: var(--surface-3); }
+.row-menu__item--danger { color: var(--danger); }
+.row-menu__item--disabled,
+.row-menu__item--disabled:hover {
+  color: var(--text-dim);
+  background: transparent;
+  cursor: not-allowed;
+}
+.row-menu__hint {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* Task Detail Popup */
@@ -1593,6 +1696,74 @@
   line-height: 1;
 }
 .tdp-dep-x:hover { color: var(--danger); }
+
+/* Parent row and Subtasks section */
+.tdp-parent-wrap { position: relative; }
+.tdp-parent-picker { width: 320px; }
+
+.tdp-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.tdp-link:hover { text-decoration: underline; }
+
+.tdp-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: help;
+  border-bottom: 1px dotted var(--text-dim);
+}
+
+.tdp-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.tdp-section-head h3 { margin-bottom: 0; }
+
+.tdp-subtasks { border-bottom: 1px solid var(--border-soft); }
+
+.tdp-subtasks-count {
+  margin-left: 8px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0;
+}
+
+.tdp-subtask {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.tdp-subtask:hover { background: var(--surface-3); }
+.tdp-subtask--done .tdp-subtask-name { color: var(--text-muted); text-decoration: line-through; }
+.tdp-subtask-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tdp-subtask-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 
 /* Description section */
 .tdp-section {

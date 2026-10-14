@@ -4,6 +4,7 @@ import { MONTHS, daysBetween, fmtDate, fmtShort, unitStarts } from '../../lib/da
 import { fitWindow } from '../../lib/exportGantt'
 import { isDone, isOverdue, projectHealth, type ProjectHealth } from '../../lib/portfolio'
 import type { PortfolioProject, PortfolioTask } from '../../lib/portfolioData'
+import { buildTree, descendants, subtreeSpan } from '../../lib/tree'
 import { RagPill } from './OverviewTab'
 import { OVER_COLOR } from './PeopleTab'
 import { Seg, Tooltip, useTooltip } from './shared'
@@ -22,10 +23,12 @@ const HEAD_H = BAND_H * 2
 const PROJECT_H = 44
 const TASK_H = 26
 const MS_SIZE = 11
+const SUB_INDENT = 14
 
 type Row =
   | { kind: 'project'; p: PortfolioProject; h: ProjectHealth }
-  | { kind: 'task'; p: PortfolioProject; t: PortfolioTask }
+  // subCount: direct subtasks; span: where all its subtasks lie
+  | { kind: 'task'; p: PortfolioProject; t: PortfolioTask; depth: number; subCount: number; span: { start: Date; end: Date } | null }
   | { kind: 'undated'; p: PortfolioProject; n: number }
 
 const rowH = (r: Row) => (r.kind === 'project' ? PROJECT_H : TASK_H)
@@ -33,6 +36,8 @@ const rowH = (r: Row) => (r.kind === 'project' ? PROJECT_H : TASK_H)
 export function RoadmapTab({ projects, today }: Props) {
   const [zoom, setZoom] = useState<Zoom>('week')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  // Off: top-level tasks only, each parent showing where its subtasks lie
+  const [showSubtasks, setShowSubtasks] = useState(false)
   const { tip, show, hide } = useTooltip()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -56,14 +61,32 @@ export function RoadmapTab({ projects, today }: Props) {
     for (const p of projects) {
       out.push({ kind: 'project', p, h: healths.get(p.ref.listId)! })
       if (!expanded.has(p.ref.listId)) continue
-      const dated = p.tasks.filter(t => t.start || t.end)
-        .sort((a, b) => ((a.start ?? a.end)!.getTime() - (b.start ?? b.end)!.getTime()))
-      for (const t of dated) out.push({ kind: 'task', p, t })
-      const undated = p.tasks.length - dated.length
+      const tree = buildTree(p.tasks)
+      const dated = (t: PortfolioTask) => !!(t.start || t.end)
+      const startOf = (t: PortfolioTask) => (t.start ?? t.end)?.getTime() ?? Infinity
+      let undated = 0
+      // Siblings by start date; subtasks follow their parent when shown. An
+      // undated parent still gets a row when some subtask below it is dated.
+      const walk = (list: PortfolioTask[], depth: number) => {
+        for (const t of [...list].sort((a, b) => startOf(a) - startOf(b))) {
+          const kids = tree.children.get(t.id) ?? []
+          const span = kids.length ? subtreeSpan(t.id, tree) : null
+          const open = showSubtasks && kids.length > 0
+          if (dated(t) || (open && descendants(t.id, tree).some(dated)) || (!showSubtasks && span)) {
+            out.push({ kind: 'task', p, t, depth, subCount: kids.length, span })
+          } else {
+            // Counted at the level shown; with subtasks on, its (all undated) subtree too
+            undated += showSubtasks ? 1 + descendants(t.id, tree).length : 1
+            continue
+          }
+          if (open) walk(kids, depth + 1)
+        }
+      }
+      walk(tree.roots, 0)
       if (undated) out.push({ kind: 'undated', p, n: undated })
     }
     return out
-  }, [projects, healths, expanded])
+  }, [projects, healths, expanded, showSubtasks])
 
   const tops = useMemo(() => {
     let y = 0
@@ -137,6 +160,7 @@ export function RoadmapTab({ projects, today }: Props) {
           <div className="pf-tip__row"><span className="pf-tip__label">Assignees</span>
             <span className="pf-tip__val">{t.assignees.map(a => a.username).join(', ')}</span></div>
         )}
+        {t.parentName && <div className="pf-tip__row"><span className="pf-tip__label">Parent</span><span className="pf-tip__val">{t.parentName}</span></div>}
         {late && <div className="pf-tip__warn">✕ Overdue by {daysBetween(t.end!, today)} days</div>}
       </>
     )
@@ -164,6 +188,10 @@ export function RoadmapTab({ projects, today }: Props) {
           setExpanded(allOpen ? new Set() : new Set(projects.map(p => p.ref.listId)))}>
           {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
+        <label className="pf-check" title="Off: top-level tasks only; a thin line under a parent shows where its subtasks lie">
+          <input type="checkbox" checked={showSubtasks} onChange={e => setShowSubtasks(e.target.checked)} />
+          Subtasks
+        </label>
         <span className="pf-muted pf-roadmap__hint">
           Bar = first start to last due date, dark part = share of tasks done. ◆ milestones; red = overdue.
         </span>
@@ -213,11 +241,16 @@ export function RoadmapTab({ projects, today }: Props) {
                   if (r.kind === 'task') {
                     const late = isOverdue(r.t, today)
                     return (
-                      <div key={i} className={`pf-rm__lrow pf-rm__lrow--task${isDone(r.t) ? ' is-done' : ''}`} style={{ height: TASK_H }}>
+                      <div key={i}
+                        className={`pf-rm__lrow pf-rm__lrow--task${isDone(r.t) ? ' is-done' : ''}${r.subCount ? ' pf-rm__lrow--parent' : ''}`}
+                        style={{ height: TASK_H, ...(r.depth ? { paddingLeft: 38 + r.depth * SUB_INDENT } : {}) }}>
                         <span className="pf-dot pf-dot--sm" style={{ background: r.t.statusColor ?? r.p.color }} />
                         <span className={`pf-rm__tname${late ? ' pf-late' : ''}`} title={r.t.name}>
                           {r.t.type === 'milestone' ? '◆ ' : ''}{r.t.name}
                         </span>
+                        {!showSubtasks && r.subCount > 0 && (
+                          <span className="pf-rm__sub">{r.subCount} subtask{r.subCount === 1 ? '' : 's'}</span>
+                        )}
                       </div>
                     )
                   }
@@ -272,18 +305,26 @@ export function RoadmapTab({ projects, today }: Props) {
                     const t = r.t
                     const cy = top + TASK_H / 2
                     const late = isOverdue(t, today)
-                    if (t.type === 'milestone') {
+                    // Thin line under a parent: where its subtasks lie
+                    const sub = r.span && barSpan(r.span.start, r.span.end)
+                    const subLine = sub && <rect x={sub.x} y={cy + 7} width={sub.w} height={3} rx={1.5} className="pf-rm__span" />
+                    if (t.type === 'milestone' && (t.end ?? t.start)) {
                       const d = (t.end ?? t.start)!
                       const fill = late ? OVER_COLOR : isDone(t) ? '#b0b0b0' : r.p.color
-                      return <Fragment key={i}>{diamond(x(d) + px / 2, cy, MS_SIZE, fill, t.id, e => show(e, taskTip(t, r.p)))}</Fragment>
+                      return <Fragment key={i}>{subLine}{diamond(x(d) + px / 2, cy, MS_SIZE, fill, t.id, e => show(e, taskTip(t, r.p)))}</Fragment>
                     }
-                    const span = barSpan(t.start, t.end)!
+                    const span = barSpan(t.start, t.end)
                     return (
-                      <rect key={i} x={span.x} y={cy - 5} width={span.w} height={10} rx={3}
-                        fill={t.statusColor ?? r.p.color} fillOpacity={isDone(t) ? 0.4 : 0.9}
-                        stroke={late ? OVER_COLOR : 'none'} strokeWidth={1.5}
-                        className="pf-rm__tbar"
-                        onMouseMove={e => show(e, taskTip(t, r.p))} onMouseLeave={hide} />
+                      <Fragment key={i}>
+                        {subLine}
+                        {span && (
+                          <rect x={span.x} y={cy - 5} width={span.w} height={10} rx={3}
+                            fill={t.statusColor ?? r.p.color} fillOpacity={isDone(t) ? 0.4 : 0.9}
+                            stroke={late ? OVER_COLOR : 'none'} strokeWidth={1.5}
+                            className="pf-rm__tbar"
+                            onMouseMove={e => show(e, taskTip(t, r.p))} onMouseLeave={hide} />
+                        )}
+                      </Fragment>
                     )
                   }
                   return null

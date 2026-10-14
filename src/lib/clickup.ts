@@ -43,6 +43,8 @@ export interface RemoteTask {
   description?: string
   time_estimate?: number | null
   list?: { id: string; name: string }
+  // Parent task id for a subtask, null for a top-level task
+  parent?: string | null
 }
 
 export interface TeamMember {
@@ -62,6 +64,8 @@ export interface CreateTaskBody {
   priority?: number
   description?: string
   assignees?: number[]
+  // Creates a subtask; the parent must live in the same list
+  parent?: string
 }
 
 export interface UpdateTaskBody extends Omit<CreateTaskBody, 'assignees' | 'start_date' | 'due_date'> {
@@ -69,6 +73,9 @@ export interface UpdateTaskBody extends Omit<CreateTaskBody, 'assignees' | 'star
   due_date?: string | null
   assignees?: { add?: number[]; rem?: number[] }
   status?: string
+  // Moves the task under another parent. ClickUp rejects null: a subtask
+  // cannot be turned back into a top-level task through the API.
+  parent?: string
 }
 
 export interface ClickUpStatus {

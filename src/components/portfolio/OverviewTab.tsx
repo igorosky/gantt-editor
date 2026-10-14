@@ -322,6 +322,7 @@ function Count({ n, bad, warn }: { n: number; bad?: boolean; warn?: boolean }) {
 export function TaskName({ task }: { task: PortfolioTask }) {
   return (
     <span className="pf-task">
+      {task.parentName && <span className="pf-task__parent" title={`Subtask of ${task.parentName}`}>{task.parentName} ›</span>}
       {task.type === 'milestone' && <span className="pf-ms-glyph" title="Milestone">◆</span>}
       {task.clickupId
         ? <a href={clickupTaskUrl(task.clickupId)} target="_blank" rel="noreferrer" title="Open in ClickUp">{task.name}</a>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteTask } from './clickup'
 import { mapRemoteTask } from './sync'
 import {
-  deserializeCache, fetchProjects, projectColor, serializeCache, toPortfolioTask, OTHER_COLOR,
+  deserializeCache, fetchProjects, projectColor, serializeCache, toPortfolioTask, withParentNames, OTHER_COLOR,
 } from './portfolioData'
 
 function remote(p: Partial<RemoteTask>): RemoteTask {
@@ -52,6 +52,17 @@ describe('portfolio tasks and cache', () => {
     const back = deserializeCache(serializeCache({ L1: { fetchedAt: 'now', tasks: [t] } }))
     expect(back.L1.tasks[0].end).toBeInstanceOf(Date)
     expect(back.L1.tasks[0]).toEqual(t)
+  })
+
+  it('keeps the ClickUp parent and names it within the project', () => {
+    const tasks = withParentNames([
+      toPortfolioTask(remote({ id: 'p', name: 'Parent' }), 'L1'),
+      toPortfolioTask(remote({ id: 'c', name: 'Review', parent: 'p' }), 'L1'),
+      toPortfolioTask(remote({ id: 'o', name: 'Orphan', parent: 'elsewhere' }), 'L1'),
+    ])
+    expect(tasks.map(t => [t.parentId, t.parentName])).toEqual([
+      [undefined, undefined], ['p', 'Parent'], ['elsewhere', undefined],
+    ])
   })
 
   it('colors projects in fixed slots, then neutral', () => {

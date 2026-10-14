@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ClickUpConfig, GanttTask } from '../types'
 import {
-  demoProjects, deserializeCache, fetchProjects, fromBoardTask, projectColor, serializeCache,
+  demoProjects, deserializeCache, fetchProjects, fromBoardTask, projectColor, serializeCache, withParentNames,
   type PortfolioCache, type PortfolioProject, type ProjectRef,
 } from '../lib/portfolioData'
 
@@ -69,7 +69,7 @@ export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) 
     if (demo) return demo
     const board = (ref: ProjectRef, i: number): PortfolioProject => ({
       ref, color: projectColor(i), isCurrentBoard: true,
-      tasks: boardTasks.map(t => fromBoardTask(t, ref.listId)),
+      tasks: withParentNames(boardTasks.map(t => fromBoardTask(t, ref.listId))),
     })
     if (config.refs.length === 0) {
       return [board({ listId: boardListId ?? LOCAL_BOARD_ID, name: 'Current board' }, 0)]

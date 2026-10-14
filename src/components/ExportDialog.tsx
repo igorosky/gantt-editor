@@ -11,6 +11,7 @@ import {
 } from '../lib/exportOutput'
 import type { PaperName } from '../lib/exportOutput'
 import { EMPTY_CRITICAL, computeCriticalPath } from '../lib/criticalPath'
+import { buildTree, flattenTree, selectionDepths } from '../lib/tree'
 
 interface Props {
   tasks: GanttTask[]      // currently visible (filters applied)
@@ -119,13 +120,20 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
 
   /* ------------------------------------------------------------ derived */
 
+  // Every task in board order (subtasks under their parent), all expanded.
+  // `tasks` already arrives in that order, minus collapsed subtasks.
+  const treeRows = useMemo(() => flattenTree(allTasks), [allTasks])
+
   const selected = useMemo(() => {
     const base =
-      scope === 'all' ? allTasks :
+      scope === 'all' ? treeRows.map(r => r.task) :
       scope === 'visible' ? tasks :
-      allTasks.filter(t => picked.has(t.id))
+      treeRows.map(r => r.task).filter(t => picked.has(t.id))
     return includeDateless ? base : base.filter(t => t.start || t.end)
-  }, [scope, tasks, allTasks, picked, includeDateless])
+  }, [scope, tasks, treeRows, picked, includeDateless])
+
+  // Like the critical path, computed over the whole selection before paging
+  const depths = useMemo(() => selectionDepths(selected, buildTree(allTasks)), [selected, allTasks])
 
   const columns = useMemo(
     () => COLUMN_ORDER.filter(c => c === 'name' || columnSet.has(c)),
@@ -154,7 +162,8 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
     showToday, showArrows,
     criticalIds: critical.taskIds,
     criticalEdges: critical.edges,
-  }), [columns, from, to, unit, title, showToday, showArrows, critical])
+    depths,
+  }), [columns, from, to, unit, title, showToday, showArrows, critical, depths])
 
   const built = useMemo(
     () => (selected.length && rangeValid ? buildGanttSvg(selected, opts) : null),
@@ -211,7 +220,7 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
     }
   }
 
-  const pickList = scope === 'pick' ? allTasks : []
+  const pickList = scope === 'pick' ? treeRows : []
 
   return (
     <div className="tdp-overlay" onClick={onClose}>
@@ -251,8 +260,8 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
                     <button type="button" onClick={() => setPicked(new Set())}>None</button>
                   </div>
                   <div className="exp-pick-list">
-                    {pickList.map(t => (
-                      <label key={t.id} className="exp-check exp-pick-row">
+                    {pickList.map(({ task: t, depth }) => (
+                      <label key={t.id} className="exp-check exp-pick-row" style={depth ? { paddingLeft: depth * 14 } : undefined}>
                         <input type="checkbox" checked={picked.has(t.id)} onChange={() => togglePick(t.id)} />
                         {isMilestone(t) && <span className="exp-ms">◆</span>}
                         <span className="exp-pick-name">{t.name}</span>

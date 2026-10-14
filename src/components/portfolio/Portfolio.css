@@ -328,6 +328,17 @@
 }
 .pf-link-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
 
+/* Parent of a subtask, for context next to generic names like "Review" */
+.pf-task__parent {
+  display: inline-block;
+  max-width: 160px;
+  margin-right: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: var(--text-muted);
+}
 .pf-task a { color: var(--text); text-decoration: none; }
 .pf-task a:hover { color: var(--accent-strong); text-decoration: underline; }
 .pf-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--text-mid); }
@@ -639,6 +650,9 @@ tbody .pf-heat__name {
 .pf-rm__lrow--project { border-top: 1px solid var(--pf-grid); font-weight: 600; }
 .pf-rm__lrow--project:first-child { border-top: none; }
 .pf-rm__lrow--task { padding-left: 38px; font-size: 12px; color: var(--text-mid); }
+.pf-rm__lrow--parent .pf-rm__tname { font-weight: 600; }
+.pf-rm__sub { flex-shrink: 0; margin-right: 8px; font-size: 11px; color: var(--text-muted); }
+.pf-rm__span { fill: var(--text-dim); pointer-events: none; }
 .pf-rm__lrow--task.is-done { color: var(--text-dim); text-decoration: line-through; }
 .pf-rm__toggle {
   width: 22px;

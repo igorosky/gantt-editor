@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react'
 import type { Assignee, GanttTask } from '../types'
+import {
+  indentTask as indentIn, moveTask as moveIn, outdentTask as outdentIn,
+  removeSubtree, setParent, type DropPosition,
+} from '../lib/tree'
 
 const STORAGE_KEY = 'gantt-tasks'
 
@@ -78,27 +82,37 @@ export function useTasks() {
     setTasks(prev => [...prev, t])
   }
 
+  // Removes the task together with all its subtasks
   function removeTask(id: string) {
-    setTasks(prev => prev.filter(t => t.id !== id))
+    setTasks(prev => removeSubtree(prev, id))
   }
 
   function updateTask(id: string, patch: Partial<GanttTask>) {
     setTasks(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
   }
 
-  function reorderTask(fromIndex: number, toIndex: number) {
-    setTasks(prev => {
-      if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= prev.length || toIndex >= prev.length) return prev
-      const next = [...prev]
-      const [moved] = next.splice(fromIndex, 1)
-      next.splice(toIndex, 0, moved)
-      return next
-    })
+  function moveTask(id: string, targetId: string, pos: DropPosition) {
+    setTasks(prev => moveIn(prev, id, targetId, pos))
+  }
+
+  function setTaskParent(id: string, parentId: string | undefined) {
+    setTasks(prev => setParent(prev, id, parentId))
+  }
+
+  function indentTask(id: string) {
+    setTasks(prev => indentIn(prev, id))
+  }
+
+  function outdentTask(id: string) {
+    setTasks(prev => outdentIn(prev, id))
   }
 
   function clearTasks() {
     setTasks([])
   }
 
-  return { tasks, setTasks, addTask, commitTask, removeTask, updateTask, reorderTask, clearTasks }
+  return {
+    tasks, setTasks, addTask, commitTask, removeTask, updateTask,
+    moveTask, setTaskParent, indentTask, outdentTask, clearTasks,
+  }
 }

@@ -15,7 +15,8 @@ export interface ProjectRef {
   spaceName?: string
 }
 
-export type PortfolioTask = GanttTask & { projectId: string; warningIds: string[] }
+// parentName: the parent's name, for context next to generic subtask names
+export type PortfolioTask = GanttTask & { projectId: string; warningIds: string[]; parentName?: string }
 
 export interface PortfolioProject {
   ref: ProjectRef
@@ -55,15 +56,25 @@ const warningIds = (t: GanttTask): string[] => getTaskWarnings(t).map(w => w.id)
 
 // Cached form: warnings are computed while the description is still at hand,
 // then the description is dropped to keep localStorage small.
+// Ids are ClickUp ids here, so the remote parent id is the local one too.
 export function toPortfolioTask(r: RemoteTask, projectId: string): PortfolioTask {
   const t = mapRemoteTask(r, r.id)
   const ids = warningIds(t)
   delete t.description
-  return { ...t, projectId, warningIds: ids }
+  return { ...t, ...(r.parent ? { parentId: r.parent } : {}), projectId, warningIds: ids }
 }
 
 export function fromBoardTask(t: GanttTask, projectId: string): PortfolioTask {
   return { ...t, projectId, warningIds: warningIds(t) }
+}
+
+// Fills parentName from the parent found in the same project
+export function withParentNames(tasks: PortfolioTask[]): PortfolioTask[] {
+  const names = new Map(tasks.map(t => [t.id, t.name]))
+  return tasks.map(t => {
+    const parentName = t.parentId ? names.get(t.parentId) : undefined
+    return parentName ? { ...t, parentName } : t
+  })
 }
 
 /* ---------------------------------------------------------------- cache */
@@ -111,7 +122,7 @@ export async function fetchProjects(
       try {
         const remote = await getAllTasks(token, listId)
         out[listId] = {
-          tasks: remote.map(r => toPortfolioTask(r, listId)),
+          tasks: withParentNames(remote.map(r => toPortfolioTask(r, listId))),
           listName: remote.find(r => r.list?.name)?.list?.name,
         }
       } catch (e) {
@@ -145,6 +156,7 @@ interface DemoTask {
   h?: number // estimate in hours
   who?: Assignee[]
   dod?: boolean
+  parent?: number // index of the parent task within the project
 }
 
 const STATUS: Record<DemoTask['st'], { status: string; color: string }> = {
@@ -182,7 +194,9 @@ const DEMO: Array<{ ref: ProjectRef; tasks: DemoTask[] }> = [
     ref: { listId: 'demo-data', name: 'Data platform', spaceName: 'Product', folderName: 'Platform' },
     tasks: [
       { name: 'Warehouse schema', s: 1, e: 20, st: 'custom', h: 60, who: [P.dave], dod: true },
-      { name: 'Ingestion jobs', s: 10, e: 40, st: 'open', h: 80, who: [P.dave, P.eve], dod: true },
+      { name: 'Ingestion jobs', s: 10, e: 40, st: 'open', dod: true },
+      { name: 'Batch loader', s: 10, e: 24, st: 'open', h: 40, who: [P.dave], dod: true, parent: 1 },
+      { name: 'Streaming loader', s: 22, e: 40, st: 'open', h: 40, who: [P.eve], dod: true, parent: 1 },
       { name: 'Dashboards', s: 35, e: 55, st: 'open', who: [P.carol], dod: true },
       { name: 'Platform GA', e: 60, ms: true, st: 'open' },
     ],
@@ -206,7 +220,7 @@ export function demoProjects(today: Date): PortfolioProject[] {
     color: projectColor(pi),
     isCurrentBoard: false,
     fetchedAt: t0.toISOString(),
-    tasks: p.tasks.map((d, ti) => {
+    tasks: withParentNames(p.tasks.map((d, ti) => {
       const start = d.ms ? addDays(t0, d.e!) : d.s !== undefined ? addDays(t0, d.s) : undefined
       const end = d.e !== undefined ? addDays(t0, d.e) : undefined
       const t: GanttTask = {
@@ -222,8 +236,9 @@ export function demoProjects(today: Date): PortfolioProject[] {
         assignees: d.who,
         timeEstimate: d.h ? d.h * 3600000 : undefined,
         description: d.dod ? DOD : d.ms ? DOD : '',
+        ...(d.parent !== undefined ? { parentId: `${p.ref.listId}-${d.parent}` } : {}),
       }
       return fromBoardTask(t, p.ref.listId)
-    }),
+    })),
   }))
 }

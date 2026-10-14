@@ -4,6 +4,7 @@ import type FrappeGanttNS from 'frappe-gantt'
 import type { CriticalScope, GanttTask } from '../types'
 import { getAllSuccessors, isMilestone } from '../utils'
 import { edgeKey } from '../lib/criticalPath'
+import { buildTree, descendants, dragClosure, subtreeSpan, type TreeRow } from '../lib/tree'
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10)
@@ -15,8 +16,13 @@ export interface GanttGeometry {
   columnWidth: number
 }
 
+// Whether the task gets a bar (a dateless one is a hidden placeholder row)
+const hasBar = (t: GanttTask): boolean => (isMilestone(t) ? !!(t.end ?? t.start) : !!(t.start && t.end))
+
 interface Props {
-  tasks: GanttTask[]
+  tasks: GanttTask[] // the visible rows, in display order
+  allTasks: GanttTask[] // every task: subtask spans and date propagation reach hidden rows too
+  rows: TreeRow[] // display metadata for `tasks`
   onDateChange: (id: string, start: Date, end: Date) => void
   onContainerReady: (el: HTMLElement) => void
   onToggleDependency: (sourceId: string, targetId: string) => void
@@ -34,6 +40,8 @@ interface Props {
 
 export function GanttPanel({
   tasks,
+  allTasks,
+  rows,
   onDateChange,
   onContainerReady,
   onToggleDependency,
@@ -56,13 +64,13 @@ export function GanttPanel({
   const onContainerReadyRef = useRef(onContainerReady)
   const onToggleDependencyRef = useRef(onToggleDependency)
   const onGeometryRef = useRef(onGeometry)
-  const tasksRef = useRef(tasks)
+  const allTasksRef = useRef(allTasks)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
     onToggleDependencyRef.current = onToggleDependency
     onGeometryRef.current = onGeometry
-    tasksRef.current = tasks
+    allTasksRef.current = allTasks
   })
 
   // Reports the column layout whenever it changes. Called after init / refresh
@@ -180,24 +188,41 @@ export function GanttPanel({
   useEffect(() => {
     if (!containerRef.current) return
 
+    const tree = buildTree(allTasks)
+    const meta = new Map(rows.map(r => [r.task.id, r]))
+    // Only rows with a bar can carry arrows or move along in a drag; frappe's
+    // drag code dereferences the bar of every predecessor it is given.
+    const barIds = new Set(tasks.filter(hasBar).map(t => t.id))
+
     const frappeTasks = tasks.map(t => {
-      const deps = t.dependencies?.join(',') ?? ''
+      if (!hasBar(t)) return { id: t.id, name: t.name, _placeholder: true, progress: 0, dependencies: '' }
+      const deps = (t.dependencies ?? []).filter(d => barIds.has(d)).join(',')
+      const row = meta.get(t.id)
+      const isParent = !!row?.childCount
       // custom_class is a space-joined token list, read by the fork's Bar.refresh
-      const crit = criticalIds.has(t.id) ? 'critical' : ''
+      const classes = [
+        isMilestone(t) ? 'milestone' : '',
+        isParent ? 'parent' : '',
+        row?.context ? 'context' : '',
+        criticalIds.has(t.id) ? 'critical' : '',
+      ].filter(Boolean).join(' ')
+      // Subtasks (with bars) move along when the parent is dragged
+      const dragWith = isParent ? descendants(t.id, tree).map(d => d.id).filter(id => barIds.has(id)) : []
+      const extra = {
+        ...(classes ? { custom_class: classes } : {}),
+        ...(dragWith.length ? { _drag_with: dragWith } : {}),
+      }
       if (isMilestone(t)) {
         // A milestone carries a single date; it is drawn as a diamond by the
         // Milestone bar subclass in the vendored frappe-gantt fork.
-        const d = t.end ?? t.start
-        if (!d) return { id: t.id, name: t.name, _placeholder: true, progress: 0, dependencies: '' }
+        const d = (t.end ?? t.start)!
         return { id: t.id, name: t.name, start: toDateStr(d), end: toDateStr(d),
-                 progress: 0, dependencies: deps, _milestone: true,
-                 custom_class: crit ? `milestone ${crit}` : 'milestone' }
+                 progress: 0, dependencies: deps, _milestone: true, ...extra }
       }
-      return t.start && t.end
-        ? { id: t.id, name: t.name, start: toDateStr(t.start), end: toDateStr(t.end),
-            progress: t.progress, dependencies: deps,
-            ...(crit ? { custom_class: crit } : {}) }
-        : { id: t.id, name: t.name, _placeholder: true, progress: 0, dependencies: '' }
+      const span = isParent ? subtreeSpan(t.id, tree) : null
+      return { id: t.id, name: t.name, start: toDateStr(t.start!), end: toDateStr(t.end!),
+               progress: t.progress, dependencies: deps, ...extra,
+               ...(span ? { _span: { start: toDateStr(span.start), end: toDateStr(span.end) } } : {}) }
     }) as FrappeGanttNS.Task[]
 
     if (tasks.length === 0) {
@@ -267,7 +292,7 @@ export function GanttPanel({
         popup: false,
         on_date_change: (task, start, end) => {
           if (!task.id) return
-          const allTasks = tasksRef.current
+          const allTasks = allTasksRef.current
           const prev = allTasks.find(t => t.id === task.id)
           // A milestone keeps a single date on both fields
           const newEnd = prev && isMilestone(prev) ? start : end
@@ -278,14 +303,18 @@ export function GanttPanel({
             const newDuration = newEnd.getTime() - start.getTime()
             const durationDelta = newDuration - prevDuration
             // Pure drag: start shifted, duration unchanged (within 2s for frappe-gantt's -1s end artifact)
+            //   -> successors and subtasks (also hidden ones) move along
             // Right-edge resize: start unchanged, end moved → durationDelta equals end delta
+            //   -> successors only; subtasks keep their dates
             // Left-edge resize: start changed, duration also changed → both conditions false, no propagation
+            const isDrag = startDelta !== 0 && Math.abs(durationDelta) < 2000
             const propagateDelta =
-              startDelta !== 0 && Math.abs(durationDelta) < 2000 ? startDelta :
+              isDrag ? startDelta :
               startDelta === 0 && Math.abs(durationDelta) >= 2000 ? durationDelta :
               0
             if (propagateDelta !== 0) {
-              for (const sid of getAllSuccessors(task.id, allTasks)) {
+              const moved = isDrag ? dragClosure(task.id, allTasks) : getAllSuccessors(task.id, allTasks)
+              for (const sid of moved) {
                 const s = allTasks.find(t => t.id === sid)
                 if (s && s.start && s.end) {
                   onDateChangeRef.current(
@@ -311,7 +340,7 @@ export function GanttPanel({
       applyCriticalArrows()
       emitGeometry()
     }
-  }, [tasks, criticalIds, criticalEdges]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, allTasks, rows, criticalIds, criticalEdges]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const connectLabel = connectSource
     ? `Click the successor task  (Esc to cancel)`

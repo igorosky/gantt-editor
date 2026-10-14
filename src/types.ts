@@ -20,6 +20,11 @@ export interface GanttTask {
   end?: Date
   progress: number
   dependencies?: string[]
+  // Local id of the parent task; absent means top level
+  parentId?: string
+  // ClickUp parent id as of the last sync: null = top level, absent = never
+  // synced with hierarchy. Baseline for the three-way merge of parentId.
+  remoteParent?: string | null
   clickupId?: string
   status?: string
   statusColor?: string

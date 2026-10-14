@@ -35,6 +35,9 @@ export interface ExportOptions {
   // before pagination, since each page only ever sees a slice of the rows.
   criticalIds?: ReadonlySet<string>
   criticalEdges?: ReadonlySet<string>
+  // Subtask level per task id, for indenting the name column. Precomputed
+  // over the whole selection for the same reason as the critical path.
+  depths?: ReadonlyMap<string, number>
 }
 
 export interface BuiltSvg {
@@ -52,6 +55,7 @@ const BAR_H = 14
 const MS_SIDE = 12
 const MS_HALF = (MS_SIDE * Math.SQRT2) / 2 // half-width of the rotated square
 const CELL_PAD = 8
+const INDENT = 12 // name column step per subtask level
 const CURVE = 5
 const ARROW_PAD = ROW_H - BAR_H
 
@@ -405,8 +409,9 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
     for (const col of columns) {
       const cw = COLUMNS[col].width
       if (col === 'name') {
-        let tx = cxPos + CELL_PAD
-        let avail = cw - 2 * CELL_PAD
+        const indent = (opts.depths?.get(t.id) ?? 0) * INDENT
+        let tx = cxPos + CELL_PAD + indent
+        let avail = cw - 2 * CELL_PAD - indent
         if (isMilestone(t)) {
           parts.push(text(tx, ty, '◆', 10, C.milestone))
           tx += 14

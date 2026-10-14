@@ -98,6 +98,23 @@ describe('projectHealth', () => {
     })
     expect(web.nextMilestone?.name).toBe('Public launch')
     expect(app.lateStart).toBe(1)
+    // The parent of two assigned subtasks is neither unassigned nor a workload double count
+    expect(data).toMatchObject({ total: 6, unassigned: 0 })
+  })
+
+  it('does not flag a task with subtasks as undated or unassigned', () => {
+    const tasks = [
+      task({ id: 'p', assignees: [] }),
+      task({ id: 'c', parentId: 'p', start: day(1), end: day(3) }),
+      task({ id: 'c2', parentId: 'p', assignees: [] }),
+    ]
+    const h = projectHealth(tasks, TODAY)
+    expect(h).toMatchObject({ unscheduled: 1, unassigned: 1 })
+    const rows = riskItems([{ id: 'x', tasks }], TODAY)
+    expect(rows.map(r => [r.task.id, r.kinds])).toEqual([
+      ['c', ['due-soon']],
+      ['c2', ['undated', 'unassigned']],
+    ])
   })
 })
 

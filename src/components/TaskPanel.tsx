@@ -4,9 +4,15 @@ import type { Filter, GanttTask } from '../types'
 import { TaskRow } from './TaskRow'
 import { FilterBar } from './FilterBar'
 import { GANTT_HEADER_HEIGHT } from '../constants'
+import {
+  ancestors, canBecomeTopLevel, canOutdent, indentTarget, moveTarget, TOP_LEVEL_BLOCKED,
+  type DropPosition, type Tree, type TreeRow,
+} from '../lib/tree'
 
 interface Props {
-  tasks: GanttTask[]
+  rows: TreeRow[]
+  tree: Tree
+  matchCount: number
   allTasks: GanttTask[]
   filters: Filter[]
   setFilters: (filters: Filter[]) => void
@@ -16,36 +22,61 @@ interface Props {
   onClear: () => void
   onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<GanttTask>) => void
-  onReorder: (fromIndex: number, toIndex: number) => void
+  onMove: (id: string, targetId: string, pos: DropPosition) => void
+  onIndent: (id: string) => void
+  onOutdent: (id: string) => void
+  onMakeTopLevel: (id: string) => void
+  onAddSubtask: (parentId: string) => void
+  onToggleCollapsed: (id: string) => void
+  onSetAllCollapsed: (collapsed: boolean) => void
   onOpenDetail: (id: string) => void
   listRef: RefObject<HTMLDivElement>
   criticalIds: Set<string>
 }
 
-export function TaskPanel({ tasks, allTasks, filters, setFilters, matchMode, setMatchMode, onAdd, onClear, onRemove, onUpdate, onReorder, onOpenDetail, listRef, criticalIds }: Props) {
-  const dragIndexRef = useRef<number | null>(null)
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+export function TaskPanel({
+  rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
+  onAdd, onClear, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
+  onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds,
+}: Props) {
+  const dragIdRef = useRef<string | null>(null)
+  const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
 
-  function handleDragStart(index: number) {
-    dragIndexRef.current = index
+  const hasParents = tree.children.size > 0
+  const anyExpanded = rows.some(r => r.childCount > 0 && !r.collapsed && !r.context)
+
+  // Top quarter: before the row; bottom quarter: after it (into an expanded
+  // parent, that is its first subtask); middle: make it a subtask.
+  function dropPosition(e: React.DragEvent, row: TreeRow): DropPosition {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const rel = (e.clientY - rect.top) / rect.height
+    if (rel < 0.25) return 'before'
+    if (rel > 0.75) return row.childCount > 0 && !row.collapsed ? 'inside-first' : 'after'
+    return 'inside'
   }
 
-  function handleDragOver(e: React.DragEvent, index: number) {
-    e.preventDefault()
-    setDragOverIndex(index)
-  }
-
-  function handleDrop(index: number) {
-    if (dragIndexRef.current !== null) {
-      onReorder(dragIndexRef.current, index)
+  function handleDragOver(e: React.DragEvent, row: TreeRow) {
+    const id = dragIdRef.current
+    if (!id) return
+    const pos = dropPosition(e, row)
+    if (!moveTarget(tree, id, row.task.id, pos)) {
+      if (drop) setDrop(null)
+      return // no preventDefault: the browser shows "not allowed"
     }
-    dragIndexRef.current = null
-    setDragOverIndex(null)
+    e.preventDefault()
+    if (drop?.id !== row.task.id || drop.pos !== pos) setDrop({ id: row.task.id, pos })
+  }
+
+  function handleDrop() {
+    const id = dragIdRef.current
+    if (id && drop) onMove(id, drop.id, drop.pos)
+    dragIdRef.current = null
+    setDrop(null)
   }
 
   function handleDragEnd() {
-    dragIndexRef.current = null
-    setDragOverIndex(null)
+    dragIdRef.current = null
+    setDrop(null)
   }
 
   return (
@@ -53,6 +84,15 @@ export function TaskPanel({ tasks, allTasks, filters, setFilters, matchMode, set
       <div className="task-panel__header" style={{ height: GANTT_HEADER_HEIGHT }}>
         <h2 className="task-panel__title">Tasks</h2>
         <div className="task-panel__header-actions">
+          {hasParents && (
+            <button
+              className="task-panel__clear-btn"
+              onClick={() => onSetAllCollapsed(anyExpanded)}
+              title={anyExpanded ? 'Hide every subtask' : 'Show every subtask'}
+            >
+              {anyExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
+          )}
           <button className="task-panel__clear-btn" onClick={onClear}>Clear all</button>
           <button className="task-panel__add-btn" onClick={onAdd}>+ Add task</button>
         </div>
@@ -64,31 +104,43 @@ export function TaskPanel({ tasks, allTasks, filters, setFilters, matchMode, set
         setFilters={setFilters}
         matchMode={matchMode}
         setMatchMode={setMatchMode}
-        visibleCount={tasks.length}
+        visibleCount={matchCount}
       />
 
       <div className="task-panel__list" ref={listRef}>
-        {tasks.length === 0 && (
+        {rows.length === 0 && (
           <p className="task-panel__empty">
             {filters.length > 0 ? 'No tasks match your filters.' : 'No tasks yet. Add one above.'}
           </p>
         )}
-        {tasks.map((task, idx) => (
-          <TaskRow
-            key={task.id}
-            task={task}
-            index={idx}
-            onUpdate={patch => onUpdate(task.id, patch)}
-            onRemove={() => onRemove(task.id)}
-            onOpenDetail={() => onOpenDetail(task.id)}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            isDragOver={dragOverIndex === idx}
-            isCritical={criticalIds.has(task.id)}
-          />
-        ))}
+        {rows.map(row => {
+          const { task } = row
+          const chain = ancestors(task.id, tree)
+          const root = chain[chain.length - 1]
+          return (
+            <TaskRow
+              key={task.id}
+              row={row}
+              showToggles={hasParents}
+              onUpdate={patch => onUpdate(task.id, patch)}
+              onRemove={() => onRemove(task.id)}
+              onOpenDetail={() => onOpenDetail(task.id)}
+              onToggleCollapsed={() => onToggleCollapsed(task.id)}
+              onAddSubtask={() => onAddSubtask(task.id)}
+              onIndent={indentTarget(tree, task.id) ? () => onIndent(task.id) : undefined}
+              onOutdent={canOutdent(tree, task.id) ? () => onOutdent(task.id) : undefined}
+              onMakeTopLevel={chain.length >= 2 && moveTarget(tree, task.id, root, 'after')
+                ? () => onMakeTopLevel(task.id) : undefined}
+              topLevelBlocked={chain.length > 0 && !canBecomeTopLevel(task) ? TOP_LEVEL_BLOCKED : undefined}
+              onDragStart={() => { dragIdRef.current = task.id }}
+              onDragOver={e => handleDragOver(e, row)}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+              dropPos={drop?.id === task.id ? drop.pos : null}
+              isCritical={criticalIds.has(task.id)}
+            />
+          )
+        })}
       </div>
     </div>
   )

@@ -1,16 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Assignee, GanttTask, Tag, TaskType } from '../types'
 import { getListStatuses, getSpaceTags, listTeamMembers, type ClickUpStatus, type TeamMember } from '../lib/clickup'
 import { isMilestone, typeChangePatch } from '../utils'
+import { buildTree, canBecomeTopLevel, subtreeSpan, TOP_LEVEL_BLOCKED } from '../lib/tree'
+import { isDone } from '../lib/portfolio'
+import { fmtShort, startOfDay } from '../lib/dates'
 import { AssigneePicker } from './AssigneePicker'
 import { TagPicker } from './TagPicker'
 import { DatePicker } from './DatePicker'
+import { ParentPicker } from './ParentPicker'
 
 interface Props {
   task: GanttTask
   allTasks: GanttTask[]
   onClose: () => void
   onUpdate: (patch: Partial<GanttTask>) => void
+  // Moves the task under another parent (undefined = top level)
+  onSetParent: (parentId: string | undefined) => void
+  onOpenTask?: (id: string) => void
+  onAddSubtask?: () => void
   onCommit?: () => void
   isCreateMode?: boolean
   clickupToken?: string
@@ -247,7 +255,15 @@ function StatusSelector({
   )
 }
 
-export function TaskDetailPopup({ task, allTasks, onClose, onUpdate, onCommit, isCreateMode, clickupToken, clickupTeamId, clickupListId, clickupSpaceId }: Props) {
+const sameDay = (a: Date | undefined, b: Date) => !!a && startOfDay(a).getTime() === startOfDay(b).getTime()
+
+const fmtSpan = (s?: Date, e?: Date): string =>
+  s && e && !sameDay(s, e) ? `${fmtShort(s)} - ${fmtShort(e)}` : s || e ? fmtShort((e ?? s)!) : 'no dates'
+
+export function TaskDetailPopup({
+  task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, isCreateMode,
+  clickupToken, clickupTeamId, clickupListId, clickupSpaceId,
+}: Props) {
   const [nameDraft, setNameDraft] = useState(task.name)
   const [descDraft, setDescDraft] = useState(task.description ?? '')
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -258,7 +274,14 @@ export function TaskDetailPopup({ task, allTasks, onClose, onUpdate, onCommit, i
   const [spaceTags, setSpaceTags] = useState<Tag[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
+  const [parentPickerOpen, setParentPickerOpen] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  const tree = useMemo(() => buildTree(allTasks), [allTasks])
+  const parent = task.parentId ? tree.byId.get(task.parentId) : undefined
+  const subtasks = isCreateMode ? [] : tree.children.get(task.id) ?? []
+  const span = isCreateMode ? null : subtreeSpan(task.id, tree)
+  const mustKeepParent = !!parent && !canBecomeTopLevel(task)
 
   useEffect(() => {
     if (isCreateMode) {
@@ -424,6 +447,39 @@ export function TaskDetailPopup({ task, allTasks, onClose, onUpdate, onCommit, i
           {/* Properties grid */}
           <div className="tdp-props">
 
+            {/* Parent */}
+            <div className="tdp-label">Parent</div>
+            <div className="tdp-value tdp-parent-wrap">
+              {parent ? (
+                <span className="tdp-dep-chip">
+                  {onOpenTask
+                    ? <button type="button" className="tdp-link" onClick={() => onOpenTask(parent.id)} title="Open parent task">{parent.name}</button>
+                    : parent.name}
+                  {!mustKeepParent && (
+                    <span className="tdp-dep-x" onClick={() => onSetParent(undefined)} title="Make it a top-level task">×</span>
+                  )}
+                </span>
+              ) : (
+                <span className="tdp-empty">Top-level task</span>
+              )}
+              <button
+                type="button"
+                className="tdp-add-assignee-btn"
+                onClick={e => { e.stopPropagation(); setParentPickerOpen(true) }}
+              >
+                {parent ? 'Move' : '+ Set parent'}
+              </button>
+              {mustKeepParent && <span className="tdp-note" title={TOP_LEVEL_BLOCKED}>Stays a subtask (ClickUp)</span>}
+              {parentPickerOpen && (
+                <ParentPicker
+                  tasks={allTasks}
+                  task={task}
+                  onPick={id => { onSetParent(id); setParentPickerOpen(false) }}
+                  onClose={() => setParentPickerOpen(false)}
+                />
+              )}
+            </div>
+
             {/* Assignees */}
             <div className="tdp-label">Assignees</div>
             <div className="tdp-value tdp-assignees-wrap">
@@ -544,6 +600,51 @@ export function TaskDetailPopup({ task, allTasks, onClose, onUpdate, onCommit, i
               ))}
             </div>
           </div>
+
+          {/* Subtasks */}
+          {!isCreateMode && (
+            <div className="tdp-section tdp-subtasks">
+              <div className="tdp-section-head">
+                <h3>
+                  Subtasks
+                  {subtasks.length > 0 && (
+                    <span className="tdp-subtasks-count">{subtasks.filter(isDone).length}/{subtasks.length}</span>
+                  )}
+                </h3>
+                <div className="tdp-topbar-spacer" />
+                {span && !ms && !(sameDay(task.start, span.start) && sameDay(task.end, span.end)) && (
+                  <button
+                    type="button"
+                    className="tdp-add-assignee-btn"
+                    onClick={() => onUpdate({ start: span.start, end: span.end })}
+                    title={`Set this task's dates to the span of its subtasks: ${fmtSpan(span.start, span.end)}`}
+                  >
+                    Fit dates to subtasks
+                  </button>
+                )}
+                {onAddSubtask && (
+                  <button type="button" className="tdp-add-assignee-btn" onClick={onAddSubtask}>+ Add subtask</button>
+                )}
+              </div>
+              {subtasks.length === 0 && <span className="tdp-empty">No subtasks</span>}
+              {subtasks.map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`tdp-subtask${isDone(c) ? ' tdp-subtask--done' : ''}`}
+                  onClick={() => onOpenTask?.(c.id)}
+                  title="Open subtask"
+                >
+                  <span className="tdp-status-dot" style={{ background: c.statusColor ?? 'var(--border-strong)' }} />
+                  <span className="tdp-subtask-name">{isMilestone(c) ? '◆ ' : ''}{c.name}</span>
+                  {(tree.children.get(c.id)?.length ?? 0) > 0 && (
+                    <span className="tdp-subtask-meta">{tree.children.get(c.id)!.length} subtasks</span>
+                  )}
+                  <span className="tdp-subtask-meta">{fmtSpan(c.start, c.end)}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Description */}
           <div className="tdp-section">

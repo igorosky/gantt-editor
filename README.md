@@ -9,14 +9,15 @@ A browser-based Gantt chart editor with two-way ClickUp sync, dependency trackin
 - **Split-panel editor**: task list on the left, Gantt chart on the right, resizable divider between them.
 - **Dateless tasks**: tasks can exist without start/end dates and still show up in the list.
 - **Milestones**: zero-duration markers (diamond glyph) alongside regular date-ranged tasks.
+- **Subtasks**: nest tasks to any depth and collapse / expand them in both panels. Add, indent (Tab), outdent (Shift+Tab), move or detach them from the row menu, by drag and drop (drop on the middle of a row to nest) or from the task popup. Dragging a parent bar moves its subtasks along, and a thin line under the parent shows where its subtasks lie.
 - **Dependencies**: click-to-connect arrows between tasks, with drag/resize propagation to successors.
 - **Critical path**: toggle highlighting of the longest duration-weighted dependency chain, scoped to the whole project or just the current view.
 - **Task detail popup**: status, priority, assignees, tags, description, and dependency editing in one place.
 - **Export**: redraw the chart as a PNG or a paginated/print-ready PDF, independent of what's currently scrolled into view.
-- **ClickUp sync**: manual two-way sync of tasks, dates, dependencies, priority, description, assignees, status, tags, and task type against a ClickUp list.
+- **ClickUp sync**: manual two-way sync of tasks, dates, dependencies, priority, description, assignees, status, tags, task type and the subtask hierarchy against a ClickUp list.
 - **Portfolio view** (header switch `Board | Portfolio`, bookmarkable at `#/portfolio/<tab>`): read-only picture across several ClickUp lists, one list = one project.
   - **Overview**: KPI tiles, project health table (Off track / At risk / On track with the reasons on hover), and a cross-project risk list (overdue, starting late, due within 7 days, undated, unassigned, missing DoD).
-  - **Roadmap**: one bar per project from first start to last due date, share done, milestones, today line; expand a project to see its tasks.
+  - **Roadmap**: one bar per project from first start to last due date, share done, milestones, today line; expand a project to see its tasks (top-level only, or with subtasks nested).
   - **Workload**: active tasks or estimated hours per day / week / month, stacked by project (plus how many projects run at once), or one project stacked by person.
   - **People**: person x period heatmap across all projects against a capacity, over capacity flagged.
 - **Board workload strip**: the same workload measure for the current board, drawn under the gantt in step with its week columns.
@@ -77,6 +78,8 @@ Open **Portfolio** in the header, then **Projects** to tick the ClickUp lists th
 
 Est. hours use the ClickUp time estimate, spread evenly over the task's working days (Mon-Fri) and split between its assignees. Tasks without an estimate are listed separately rather than guessed.
 
+Subtasks: the task count only counts the subtasks of a parent, not the parent again; hours add every task's own estimate (ClickUp does not roll estimates up through the API). A task with subtasks is not flagged as undated or unassigned itself, and subtasks show their parent's name next to theirs in the risk list.
+
 ## Project structure
 
 ```
@@ -90,6 +93,7 @@ src/
     portfolio.ts  task state (done / overdue / late start) and project health rules
     portfolioData.ts  multi-list fetch, cache, demo data
     workload.ts   workload per time bucket
+    tree.ts       parent / subtask hierarchy: display order, moves, spans
     criticalPath.ts
     exportGantt.ts
     exportOutput.ts
@@ -106,4 +110,5 @@ src/
 - Local task deletion does not delete the corresponding ClickUp task.
 - No automatic rate-limit backoff against the ClickUp API.
 - No realtime sync, webhooks, or auto-polling — sync is manual, on demand.
-- Subtasks, comments, attachments, time tracking, and progress percentage are not synced.
+- ClickUp's API cannot turn a subtask back into a top-level task, so the app keeps such a task under some parent; use "Convert to > Parent task" in ClickUp, then sync.
+- Comments, attachments, time tracking, and progress percentage are not synced.

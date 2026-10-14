@@ -1,4 +1,5 @@
 import type { ClickUpConfig, GanttTask, SyncReport } from '../types'
+import { buildTree, ancestors } from './tree'
 import {
   addDependency,
   addTagToTask,
@@ -227,10 +228,17 @@ export async function syncWithClickUp(
     }
   }
 
-  // Phase 3 — create remote for unlinked
-  for (const u of unlinked) {
+  // Phase 3 — create remote for unlinked. Parents go first so a new subtask
+  // can name its (possibly just created) parent.
+  const localTree = buildTree(localTasks)
+  const depth = (t: GanttTask) => ancestors(t.id, localTree).length
+  const cuidOf = new Map<string, string>()
+  for (const t of next) if (t.clickupId) cuidOf.set(t.id, t.clickupId)
+  for (const u of [...unlinked].sort((a, b) => depth(a) - depth(b))) {
     try {
       const assigneeIds = (u.assignees ?? []).map(a => a.id).filter(id => id !== -1)
+      const parentCuid = u.parentId ? cuidOf.get(u.parentId) : undefined
+      const parent = parentCuid && remoteById.has(parentCuid) ? parentCuid : undefined
       const created = await createTask(token, listId, {
         name: u.name,
         ...(u.type === 'milestone' ? { custom_item_id: MILESTONE_ITEM_ID } : {}),
@@ -239,8 +247,11 @@ export async function syncWithClickUp(
         ...(u.priority !== undefined ? { priority: u.priority } : {}),
         ...(u.description !== undefined ? { description: u.description } : {}),
         ...(assigneeIds.length ? { assignees: assigneeIds } : {}),
+        ...(parent ? { parent } : {}),
       })
-      remoteById.set(created.id, created)
+      // The create response may omit the parent; the hierarchy phase reads it
+      remoteById.set(created.id, { ...created, parent: created.parent ?? parent ?? null })
+      cuidOf.set(u.id, created.id)
       for (const tag of (u.tags ?? [])) {
         try {
           await addTagToTask(token, created.id, tag.name)
@@ -248,7 +259,7 @@ export async function syncWithClickUp(
           report.errors.push(`addTagToTask(${created.id}, ${tag.name}): ${String(e)}`)
         }
       }
-      next.push({ ...u, clickupId: created.id })
+      next.push({ ...u, clickupId: created.id, remoteParent: parent ?? null })
       report.createdRemote++
     } catch (e) {
       report.errors.push(`createTask(${u.name}): ${String(e)}`)
@@ -260,11 +271,11 @@ export async function syncWithClickUp(
   const linkedCuids = new Set(next.map(t => t.clickupId).filter((x): x is string => !!x))
   for (const r of remote) {
     if (linkedCuids.has(r.id)) continue
+    // No baseline yet: the hierarchy phase adopts the remote parent
     next.push(mapRemoteTask(r, crypto.randomUUID()))
     report.added++
   }
 
-  // Phase 5 — dependencies (additive union)
   // Map clickupId <-> local id (only over tasks that have a clickupId)
   const cuidToLocal = new Map<string, string>()
   const localToCuid = new Map<string, string>()
@@ -275,6 +286,47 @@ export async function syncWithClickUp(
     }
   }
 
+  // Phase 4b — hierarchy. Three-way merge of the parent against the parent
+  // seen at the last sync (remoteParent): a remote move wins, a local-only
+  // move is pushed. ClickUp cannot turn a subtask into a top-level task, so a
+  // local un-nesting is only reported, never sent.
+  for (const t of next) {
+    const r = t.clickupId ? remoteById.get(t.clickupId) : undefined
+    if (!r) continue
+    const remoteP = r.parent ?? null
+    const base = t.remoteParent
+    if (base === undefined || remoteP !== base) {
+      // Never synced with hierarchy, or moved in ClickUp. A parent outside
+      // this list leaves the task at the top level here.
+      const parentId = remoteP ? cuidToLocal.get(remoteP) : undefined
+      if (base !== undefined && parentId !== t.parentId) report.updatedFromRemote++
+      t.parentId = parentId
+      t.remoteParent = remoteP
+      continue
+    }
+    const localP = t.parentId ? localToCuid.get(t.parentId) : null
+    if (localP === undefined || localP === remoteP) continue // parent not in ClickUp yet, or unchanged
+    if (localP === null) {
+      if (remoteP && !cuidToLocal.has(remoteP)) continue // parent outside this list
+      report.errors.push(`"${t.name}" is a subtask in ClickUp; its API cannot make it a top-level task (use Convert to > Parent task in ClickUp)`)
+      continue
+    }
+    try {
+      await updateTask(token, r.id, { parent: localP })
+      t.remoteParent = localP
+      report.pushedToRemote++
+    } catch (e) {
+      report.errors.push(`setParent(${r.id} → ${localP}): ${String(e)}`)
+    }
+  }
+
+  // A parent that left the board (deleted in ClickUp) leaves its subtasks at the top level
+  const nextIds = new Set(next.map(t => t.id))
+  for (const t of next) {
+    if (t.parentId && !nextIds.has(t.parentId)) t.parentId = undefined
+  }
+
+  // Phase 5 — dependencies (additive union)
   // Build local edges from next
   const localEdges = new Set<string>()
   const localPredsByCuid = new Map<string, Set<string>>()

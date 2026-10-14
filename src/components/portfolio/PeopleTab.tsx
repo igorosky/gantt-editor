@@ -48,7 +48,11 @@ export function PeopleTab({ projects, today }: Props) {
   const boundaries = useMemo(() => unitBoundaries(from, to, unit), [from, to, unit])
 
   const result = useMemo(() => computeWorkload(
-    tasks.map(t => ({ ...t, id: `${t.projectId}:${t.id}` })),
+    tasks.map(t => ({
+      ...t,
+      id: `${t.projectId}:${t.id}`,
+      parentId: t.parentId && `${t.projectId}:${t.parentId}`,
+    })),
     boundaries,
     { metric, includeDone, keysOf: assigneeKeys },
   ), [tasks, boundaries, metric, includeDone])

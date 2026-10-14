@@ -83,6 +83,8 @@ export default class Bar {
 
     draw() {
         this.draw_bar();
+        this.$span = null;
+        if (this.task._span) this.draw_span();
         this.draw_label();
         this.draw_resize_handles();
 
@@ -125,6 +127,34 @@ export default class Bar {
         });
         this.$date_highlight = $date_highlight;
         this.gantt.$lower_header.prepend(this.$date_highlight);
+    }
+
+    // Local addition: thin bracket under a parent's bar covering its subtasks
+    // (task._span = { start, end }, inclusive dates). Shifted with the bar in
+    // update_bar_position, since the subtasks move along in a drag.
+    draw_span() {
+        const { column_width, unit, step } = this.gantt.config;
+        const toX = (d) =>
+            (date_utils.diff(d, this.gantt.gantt_start, unit) / step) *
+            column_width;
+        const start = date_utils.parse(this.task._span.start);
+        const end = date_utils.add(
+            date_utils.parse(this.task._span.end),
+            24,
+            'hour',
+        );
+        const x = toX(start);
+        this.$span = createSVG('rect', {
+            x,
+            y: this.y + this.height + 3,
+            width: Math.max(2, toX(end) - x),
+            height: 4,
+            rx: 2,
+            ry: 2,
+            class: 'bar-span',
+            append_to: this.bar_group,
+        });
+        this.span_offset = x - this.x;
     }
 
     draw_label() {
@@ -321,15 +351,17 @@ export default class Bar {
         const bar = this.$bar;
 
         if (x) {
-            const xs = this.task.dependencies.map((dep) => {
-                return this.gantt.get_bar(dep).$bar.getX();
-            });
+            const xs = this.task.dependencies
+                .map((dep) => this.gantt.get_bar(dep))
+                .filter(Boolean)
+                .map((dep_bar) => dep_bar.$bar.getX());
             const valid_x = xs.reduce((prev, curr) => {
                 return prev && x >= curr;
             }, true);
             if (!valid_x) return;
             this.update_attr(bar, 'x', x);
             this.x = x;
+            if (this.$span) this.update_attr(this.$span, 'x', x + this.span_offset);
             this.$date_highlight.style.left = x + 'px';
         }
         if (width > 0) {

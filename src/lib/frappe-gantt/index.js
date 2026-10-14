@@ -1257,7 +1257,8 @@ export default class Gantt {
             } else {
                 ids = [parent_bar_id];
             }
-            bars = ids.map((id) => this.get_bar(id));
+            // An id can name a task without a bar (hidden by a filter / collapse)
+            bars = ids.map((id) => this.get_bar(id)).filter(Boolean);
 
             this.bar_being_dragged = false;
             pos = x_on_start;
@@ -1447,14 +1448,19 @@ export default class Gantt {
 
     // Fixed BFS: adds successors to 'out' only after computing next 'to_process',
     // so they aren't prematurely excluded from further traversal.
+    // Local addition: a task's _drag_with ids (its subtasks) move along too.
     get_all_dependent_tasks(task_id) {
         const out = new Set();
         let to_process = [task_id];
         while (to_process.length) {
             const next = [];
             for (const id of to_process) {
-                for (const dep of (this.dependency_map[id] || [])) {
-                    if (dep && !out.has(dep)) {
+                const linked = [
+                    ...(this.dependency_map[id] || []),
+                    ...(this.get_task(id)?._drag_with || []),
+                ];
+                for (const dep of linked) {
+                    if (dep && dep !== task_id && !out.has(dep)) {
                         out.add(dep);
                         next.push(dep);
                     }

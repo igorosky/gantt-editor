@@ -16,6 +16,7 @@ import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
 import { syncWithClickUp } from './lib/sync'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
+import { buildTree, descendants, flattenTree } from './lib/tree'
 import type { CriticalScope, Filter, GanttTask, SyncReport } from './types'
 import './App.css'
 
@@ -49,8 +50,24 @@ function loadStripPrefs(): { on: boolean; metric: WorkloadMetric } {
   return { on: false, metric: 'count' }
 }
 
+const COLLAPSED_KEY = 'gantt-collapsed'
+
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as unknown
+      if (Array.isArray(p)) return new Set(p.filter((x): x is string => typeof x === 'string'))
+    }
+  } catch { /* malformed entry */ }
+  return new Set()
+}
+
 export default function App() {
-  const { tasks, setTasks, commitTask, removeTask, updateTask, reorderTask, clearTasks } = useTasks()
+  const {
+    tasks, setTasks, commitTask, removeTask, updateTask, moveTask, setTaskParent,
+    indentTask, outdentTask, clearTasks,
+  } = useTasks()
   const { config, setConfig } = useClickUpConfig()
   const [leftPct, setLeftPct] = useState(DEFAULT_PCT)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -62,6 +79,18 @@ export default function App() {
   const [filters, setFilters] = useState<Filter[]>([])
   const [matchMode, setMatchMode] = useState<'all' | 'any'>('all')
   const filteredTasks = useMemo(() => applyFilters(tasks, filters, matchMode), [tasks, filters, matchMode])
+  // Subtasks of a collapsed task are hidden; while filtering, the ancestors of
+  // a match are shown as context rows. Both panels get the same rows.
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed)
+  const tree = useMemo(() => buildTree(tasks), [tasks])
+  const rows = useMemo(
+    () => flattenTree(tasks, {
+      collapsed,
+      include: filters.length ? new Set(filteredTasks.map(t => t.id)) : undefined,
+    }),
+    [tasks, collapsed, filters.length, filteredTasks],
+  )
+  const visibleTasks = useMemo(() => rows.map(r => r.task), [rows])
   const [criticalOn, setCriticalOn] = useState(() => loadCritical().on)
   const [criticalScope, setCriticalScope] = useState<CriticalScope>(() => loadCritical().scope)
   const critical = useMemo(
@@ -87,6 +116,30 @@ export default function App() {
       localStorage.setItem(CRITICAL_KEY, JSON.stringify({ on: criticalOn, scope: criticalScope }))
     } catch { /* quota */ }
   }, [criticalOn, criticalScope])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]))
+    } catch { /* quota */ }
+  }, [collapsed])
+
+  const toggleCollapsed = useCallback((id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const expand = useCallback((id: string) => {
+    setCollapsed(prev => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     try {
@@ -159,6 +212,38 @@ export default function App() {
     end.setDate(end.getDate() + 7)
     setNewTaskDraft({ id: crypto.randomUUID(), name: 'New task', start: t, end, progress: 0 })
   }, [])
+
+  // A new subtask starts on its parent's dates
+  const handleAddSubtask = useCallback((parentId: string) => {
+    const p = tasks.find(t => t.id === parentId)
+    const t = new Date()
+    t.setHours(0, 0, 0, 0)
+    const week = new Date(t)
+    week.setDate(week.getDate() + 7)
+    const start = p?.start ?? p?.end ?? t
+    const end = p?.end ?? p?.start ?? week
+    setDetailTaskId(null)
+    setNewTaskDraft({ id: crypto.randomUUID(), name: 'New subtask', start, end, progress: 0, parentId })
+  }, [tasks])
+
+  const handleCommitDraft = useCallback(() => {
+    if (!newTaskDraft) return
+    commitTask(newTaskDraft)
+    if (newTaskDraft.parentId) expand(newTaskDraft.parentId)
+    setNewTaskDraft(null)
+  }, [newTaskDraft, commitTask, expand])
+
+  const handleRemove = useCallback((id: string) => {
+    const t = tree.byId.get(id)
+    const n = descendants(id, tree).length
+    if (t && n > 0 && !confirm(`Delete "${t.name}" and its ${n} subtask${n === 1 ? '' : 's'}?`)) return
+    removeTask(id)
+  }, [tree, removeTask])
+
+  // Collapse every task that has subtasks, or expand everything
+  const setAllCollapsed = useCallback((on: boolean) => {
+    setCollapsed(on ? new Set(tree.children.keys()) : new Set())
+  }, [tree])
 
   const handleDraftUpdate = useCallback((patch: Partial<GanttTask>) => {
     setNewTaskDraft(prev => prev ? { ...prev, ...patch } : null)
@@ -292,7 +377,9 @@ export default function App() {
       <div className="app__body" ref={containerRef}>
         <div className="app__panel app__panel--left" style={{ width: `${leftPct}%` }}>
           <TaskPanel
-            tasks={filteredTasks}
+            rows={rows}
+            tree={tree}
+            matchCount={filteredTasks.length}
             allTasks={tasks}
             filters={filters}
             setFilters={setFilters}
@@ -300,9 +387,15 @@ export default function App() {
             setMatchMode={setMatchMode}
             onAdd={handleAddTask}
             onClear={() => { if (confirm('Remove all tasks?')) clearTasks() }}
-            onRemove={removeTask}
+            onRemove={handleRemove}
             onUpdate={handleTaskUpdate}
-            onReorder={reorderTask}
+            onMove={moveTask}
+            onIndent={indentTask}
+            onOutdent={outdentTask}
+            onMakeTopLevel={id => setTaskParent(id, undefined)}
+            onAddSubtask={handleAddSubtask}
+            onToggleCollapsed={toggleCollapsed}
+            onSetAllCollapsed={setAllCollapsed}
             onOpenDetail={(id) => setDetailTaskId(id)}
             listRef={taskListRef}
             criticalIds={critical.taskIds}
@@ -311,7 +404,9 @@ export default function App() {
         <Divider onResize={handleResize} />
         <div className="app__panel app__panel--right" style={{ width: `${100 - leftPct}%` }}>
           <GanttPanel
-            tasks={filteredTasks}
+            tasks={visibleTasks}
+            allTasks={tasks}
+            rows={rows}
             onDateChange={(id, start, end) => updateTask(id, { start, end })}
             onContainerReady={handleContainerReady}
             onToggleDependency={handleToggleDependency}
@@ -350,7 +445,7 @@ export default function App() {
       />
       {exportOpen && (
         <ExportDialog
-          tasks={filteredTasks}
+          tasks={visibleTasks}
           allTasks={tasks}
           onClose={() => setExportOpen(false)}
         />
@@ -363,6 +458,9 @@ export default function App() {
             allTasks={tasks}
             onClose={() => setDetailTaskId(null)}
             onUpdate={patch => handleTaskUpdate(detailTaskId, patch)}
+            onSetParent={parentId => setTaskParent(detailTaskId, parentId)}
+            onOpenTask={id => setDetailTaskId(id)}
+            onAddSubtask={() => handleAddSubtask(detailTaskId)}
             clickupToken={config?.token}
             clickupTeamId={config?.teamId}
             clickupListId={config?.listId}
@@ -376,7 +474,8 @@ export default function App() {
           allTasks={tasks}
           onClose={() => setNewTaskDraft(null)}
           onUpdate={handleDraftUpdate}
-          onCommit={() => { commitTask(newTaskDraft); setNewTaskDraft(null) }}
+          onSetParent={parentId => handleDraftUpdate({ parentId })}
+          onCommit={handleCommitDraft}
           isCreateMode
           clickupToken={config?.token}
           clickupTeamId={config?.teamId}
