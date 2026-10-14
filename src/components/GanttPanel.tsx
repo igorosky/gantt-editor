@@ -9,6 +9,12 @@ function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
+// Column layout of the rendered chart, for widgets drawn in step with it
+export interface GanttGeometry {
+  dates: Date[] // start of every column
+  columnWidth: number
+}
+
 interface Props {
   tasks: GanttTask[]
   onDateChange: (id: string, start: Date, end: Date) => void
@@ -21,6 +27,9 @@ interface Props {
   onToggleCritical: () => void
   criticalScope: CriticalScope
   onCriticalScopeChange: (scope: CriticalScope) => void
+  onGeometry?: (g: GanttGeometry | null) => void
+  loadStripOn: boolean
+  onToggleLoadStrip: () => void
 }
 
 export function GanttPanel({
@@ -35,6 +44,9 @@ export function GanttPanel({
   onToggleCritical,
   criticalScope,
   onCriticalScopeChange,
+  onGeometry,
+  loadStripOn,
+  onToggleLoadStrip,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -43,13 +55,50 @@ export function GanttPanel({
   const onDateChangeRef = useRef(onDateChange)
   const onContainerReadyRef = useRef(onContainerReady)
   const onToggleDependencyRef = useRef(onToggleDependency)
+  const onGeometryRef = useRef(onGeometry)
   const tasksRef = useRef(tasks)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
     onToggleDependencyRef.current = onToggleDependency
+    onGeometryRef.current = onGeometry
     tasksRef.current = tasks
   })
+
+  // Reports the column layout whenever it changes. Called after init / refresh
+  // and on scroll, since infinite padding re-renders with extra columns from
+  // inside frappe-gantt's own wheel handler.
+  const lastGeomRef = useRef('')
+  function emitGeometry() {
+    const gantt = ganttRef.current as any
+    const dates = gantt?.dates as Date[] | undefined
+    const columnWidth = gantt?.config?.column_width as number | undefined
+    if (!dates?.length || !columnWidth) {
+      if (lastGeomRef.current) { lastGeomRef.current = ''; onGeometryRef.current?.(null) }
+      return
+    }
+    const sig = `${dates[0].getTime()}:${dates.length}:${columnWidth}`
+    if (sig === lastGeomRef.current) return
+    lastGeomRef.current = sig
+    onGeometryRef.current?.({ dates: dates.slice(), columnWidth })
+  }
+
+  // The chart height is fixed at init; keep it matching the panel when the
+  // window or the layout around it (e.g. the workload strip) changes size.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const gantt = ganttRef.current as any
+      const gc = gantt?.$container as HTMLElement | undefined
+      const h = el.clientHeight
+      if (!gc || h <= 0) return
+      gc.style.height = `${h}px`
+      gantt.options.container_height = h
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Connect-mode state (React) + refs (for use inside frappe-gantt callbacks)
   const [connectMode, setConnectMode] = useState(false)
@@ -158,6 +207,7 @@ export function GanttPanel({
         ganttRef.current = null
         oldContainer?.remove()
       }
+      emitGeometry()
       return
     }
 
@@ -207,6 +257,7 @@ export function GanttPanel({
       }
 
       applyCriticalArrows()
+      emitGeometry()
     } else {
       const panelHeight = containerRef.current.clientHeight
 
@@ -253,10 +304,12 @@ export function GanttPanel({
       const ganttContainer = (ganttRef.current as any)?.$container as HTMLElement | null
       if (ganttContainer) {
         ganttContainer.style.height = `${panelHeight}px`
+        ganttContainer.addEventListener('scroll', emitGeometry, { passive: true })
         onContainerReadyRef.current(ganttContainer)
       }
 
       applyCriticalArrows()
+      emitGeometry()
     }
   }, [tasks, criticalIds, criticalEdges]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -298,6 +351,15 @@ export function GanttPanel({
             </button>
           </div>
         )}
+        <button
+          type="button"
+          className={`gantt-panel__load-btn${loadStripOn ? ' gantt-panel__load-btn--active' : ''}`}
+          onClick={onToggleLoadStrip}
+          aria-pressed={loadStripOn}
+          title="Show how many tasks (or estimated hours) run in each week of this board"
+        >
+          ▤ Workload
+        </button>
         <button
           type="button"
           className={`gantt-panel__crit-btn${criticalOn ? ' gantt-panel__crit-btn--active' : ''}`}

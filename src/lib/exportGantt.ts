@@ -9,12 +9,18 @@
 import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
 import { edgeKey } from './criticalPath'
+import {
+  MONTHS, addDays, autoUnit, daysBetween, fmtDate, startOfDay, startOfMonth,
+  startOfWeek, unitStarts, type TimeUnit,
+} from './dates'
+
+// Re-exported so existing importers keep working
+export { addDays, autoUnit, daysBetween, startOfDay, unitStarts }
+export type { TimeUnit }
 
 export type LhsColumn =
   | 'name' | 'start' | 'end' | 'duration' | 'status'
   | 'assignees' | 'priority' | 'tags' | 'id'
-
-export type TimeUnit = 'day' | 'week' | 'month'
 
 export interface ExportOptions {
   columns: LhsColumn[]  // 'name' is always present and drawn first
@@ -96,49 +102,6 @@ const PRIORITY_LABELS: Record<number, string> = {
   1: 'Urgent', 2: 'High', 3: 'Normal', 4: 'Low',
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-/* ------------------------------------------------------------ date helpers */
-
-const DAY_MS = 86400000
-
-export function startOfDay(d: Date): Date {
-  const x = new Date(d)
-  x.setHours(0, 0, 0, 0)
-  return x
-}
-
-export function addDays(d: Date, n: number): Date {
-  const x = startOfDay(d)
-  x.setDate(x.getDate() + n)
-  return x
-}
-
-// Rounded so DST transitions never shift a day by an hour.
-export function daysBetween(a: Date, b: Date): number {
-  return Math.round((startOfDay(b).getTime() - startOfDay(a).getTime()) / DAY_MS)
-}
-
-function startOfWeek(d: Date): Date {
-  const x = startOfDay(d)
-  const dow = (x.getDay() + 6) % 7 // Monday = 0
-  x.setDate(x.getDate() - dow)
-  return x
-}
-
-function startOfMonth(d: Date): Date {
-  const x = startOfDay(d)
-  x.setDate(1)
-  return x
-}
-
-function fmtDate(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, '0')
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  return `${dd}.${mm}.${d.getFullYear()}`
-}
-
 /* -------------------------------------------------------------- layout math */
 
 export function pxPerDay(unit: TimeUnit): number {
@@ -155,25 +118,6 @@ export function lhsWidth(columns: LhsColumn[]): number {
 
 export function headerBlockHeight(opts: { title?: string }): number {
   return HEADER_H + (opts.title ? TITLE_H : 0)
-}
-
-// Start dates of every visible unit column, from the unit containing `from`
-// through the unit containing `to`.
-export function unitStarts(from: Date, to: Date, unit: TimeUnit): Date[] {
-  const out: Date[] = []
-  let cur =
-    unit === 'day' ? startOfDay(from) :
-    unit === 'week' ? startOfWeek(from) :
-    startOfMonth(from)
-  const last = startOfDay(to)
-  while (cur <= last) {
-    out.push(cur)
-    cur =
-      unit === 'day' ? addDays(cur, 1) :
-      unit === 'week' ? addDays(cur, 7) :
-      new Date(cur.getFullYear(), cur.getMonth() + 1, 1)
-  }
-  return out
 }
 
 function monthStarts(from: Date, to: Date): Date[] {
@@ -196,13 +140,6 @@ function yearStarts(from: Date, to: Date): Date[] {
     cur = new Date(cur.getFullYear() + 1, 0, 1)
   }
   return out
-}
-
-export function autoUnit(from: Date, to: Date): TimeUnit {
-  const days = daysBetween(from, to) + 1
-  if (days <= 60) return 'day'
-  if (days <= 550) return 'week'
-  return 'month'
 }
 
 // Window covering every dated task, padded out to whole units. Falls back to

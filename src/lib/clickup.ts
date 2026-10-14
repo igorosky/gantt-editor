@@ -15,6 +15,8 @@ export interface Space {
 export interface Folder {
   id: string
   name: string
+  // GET /space/{id}/folder embeds each folder's lists
+  lists?: List[]
 }
 
 export interface List {
@@ -34,11 +36,13 @@ export interface RemoteTask {
   due_date: string | null
   date_updated: string
   dependencies: Array<{ task_id: string; depends_on: string; type: number }>
-  status?: { status: string; color?: string }
+  status?: { status: string; color?: string; type?: string }
   priority?: { orderindex?: string }
   assignees?: Array<{ id: number; username: string }>
   tags?: Array<{ name: string; tag_bg?: string; tag_fg?: string }>
   description?: string
+  time_estimate?: number | null
+  list?: { id: string; name: string }
 }
 
 export interface TeamMember {
@@ -71,6 +75,7 @@ export interface ClickUpStatus {
   status: string
   color: string
   orderindex: number
+  type?: string
 }
 
 export class ClickUpError extends Error {

@@ -14,6 +14,13 @@ A browser-based Gantt chart editor with two-way ClickUp sync, dependency trackin
 - **Task detail popup**: status, priority, assignees, tags, description, and dependency editing in one place.
 - **Export**: redraw the chart as a PNG or a paginated/print-ready PDF, independent of what's currently scrolled into view.
 - **ClickUp sync**: manual two-way sync of tasks, dates, dependencies, priority, description, assignees, status, tags, and task type against a ClickUp list.
+- **Portfolio view** (header switch `Board | Portfolio`, bookmarkable at `#/portfolio/<tab>`): read-only picture across several ClickUp lists, one list = one project.
+  - **Overview**: KPI tiles, project health table (Off track / At risk / On track with the reasons on hover), and a cross-project risk list (overdue, starting late, due within 7 days, undated, unassigned, missing DoD).
+  - **Roadmap**: one bar per project from first start to last due date, share done, milestones, today line; expand a project to see its tasks.
+  - **Workload**: active tasks or estimated hours per day / week / month, stacked by project (plus how many projects run at once), or one project stacked by person.
+  - **People**: person x period heatmap across all projects against a capacity, over capacity flagged.
+- **Board workload strip**: the same workload measure for the current board, drawn under the gantt in step with its week columns.
+- **Overdue cues**: overdue due dates shown in red on the board, plus an "Overdue" filter.
 - **Local persistence**: all data is stored in the browser's `localStorage`, no server-side database required.
 
 ## Tech stack
@@ -46,6 +53,12 @@ For example, to type-check without emitting output:
 docker run --rm -v $(pwd):/work node:20-alpine sh -c "cd /work && npx tsc --noEmit"
 ```
 
+Unit tests (vitest, pure modules under `src/lib/`):
+
+```bash
+docker run --rm -v $(pwd):/work node:20-alpine sh -c "cd /work && npm test"
+```
+
 ## ClickUp integration
 
 Sync is optional and configured entirely from the app UI (the "ClickUp" button in the header):
@@ -58,14 +71,25 @@ The token is stored in `localStorage`, which is convenient for a personal tool b
 
 See `CLAUDE.md` for a detailed breakdown of the sync engine's conflict resolution rules and field coverage.
 
+### Portfolio
+
+Open **Portfolio** in the header, then **Projects** to tick the ClickUp lists that make up the portfolio. They are fetched read only (GET requests, nothing is written back) and cached in `localStorage`; **Refresh** fetches them again. The list connected to the board always uses the live board data, including unsynced edits. Without a ClickUp connection the portfolio shows the current board only, and **Load demo data** fills it with sample projects for a look around.
+
+Est. hours use the ClickUp time estimate, spread evenly over the task's working days (Mon-Fri) and split between its assignees. Tasks without an estimate are listed separately rather than guessed.
+
 ## Project structure
 
 ```
 src/
   components/     UI components (task rows, popups, dialogs, pickers)
-  hooks/          useTasks (state + persistence), useClickUpConfig
+    portfolio/    Portfolio view: overview, roadmap, workload, people
+  hooks/          useTasks (state + persistence), useClickUpConfig, usePortfolio, useHashRoute
   lib/
     frappe-gantt/ vendored Gantt chart library with local fixes
+    dates.ts      calendar helpers shared by export and portfolio
+    portfolio.ts  task state (done / overdue / late start) and project health rules
+    portfolioData.ts  multi-list fetch, cache, demo data
+    workload.ts   workload per time bucket
     criticalPath.ts
     exportGantt.ts
     exportOutput.ts

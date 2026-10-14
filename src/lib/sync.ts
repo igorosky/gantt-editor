@@ -19,6 +19,39 @@ function sameDay(a: Date | null | undefined, b: Date | null | undefined): boolea
   return a.getTime() === b.getTime()
 }
 
+const remotePriority = (r: RemoteTask): GanttTask['priority'] =>
+  r.priority?.orderindex ? (Number(r.priority.orderindex) as 1 | 2 | 3 | 4) : undefined
+
+const remoteEstimate = (r: RemoteTask): number | undefined =>
+  typeof r.time_estimate === 'number' && r.time_estimate > 0 ? r.time_estimate : undefined
+
+// Fresh local row for a remote task. A remote milestone collapses start / end
+// onto its due date. Dependencies are left to the caller, since they need the
+// clickupId -> local id mapping.
+export function mapRemoteTask(r: RemoteTask, id: string): GanttTask {
+  const remoteIsMs = isRemoteMilestone(r)
+  const rStart = fromClickUpDate(r.start_date)
+  const rEnd = fromClickUpDate(r.due_date)
+  const msDate = rEnd ?? rStart
+  return {
+    id,
+    clickupId: r.id,
+    name: r.name,
+    type: remoteIsMs ? 'milestone' : 'task',
+    start: (remoteIsMs ? msDate : rStart) ?? undefined,
+    end: (remoteIsMs ? msDate : rEnd) ?? undefined,
+    progress: 0,
+    status: r.status?.status,
+    statusColor: r.status?.color,
+    statusType: r.status?.type,
+    priority: remotePriority(r),
+    assignees: r.assignees?.map(a => ({ id: a.id, username: a.username })),
+    tags: r.tags?.map(t => ({ name: t.name, tag_bg: t.tag_bg, tag_fg: t.tag_fg })),
+    description: r.description,
+    timeEstimate: remoteEstimate(r),
+  }
+}
+
 function buildRemoteEdgeKey(taskId: string, dependsOn: string): string {
   return `${taskId}->${dependsOn}`
 }
@@ -105,7 +138,7 @@ export async function syncWithClickUp(
     const remoteStart = fromClickUpDate(r.start_date)
     const remoteEnd = fromClickUpDate(r.due_date)
 
-    const remotePriority = r.priority?.orderindex ? (Number(r.priority.orderindex) as 1 | 2 | 3 | 4) : undefined
+    const rPriority = remotePriority(r)
     const remoteAssignees = r.assignees?.map(a => ({ id: a.id, username: a.username }))
     const remoteTags = r.tags?.map(t => ({ name: t.name, tag_bg: t.tag_bg, tag_fg: t.tag_fg }))
     const remoteIsMs = isRemoteMilestone(r)
@@ -127,10 +160,12 @@ export async function syncWithClickUp(
         end: (remoteIsMs ? remoteMsDate : remoteEnd) ?? undefined,
         status: r.status?.status,
         statusColor: r.status?.color,
-        priority: remotePriority,
+        statusType: r.status?.type,
+        priority: rPriority,
         assignees: remoteAssignees,
         tags: remoteTags,
         description: r.description ?? l.description,
+        timeEstimate: remoteEstimate(r),
       })
       if (fieldsChanged) report.updatedFromRemote++
     } else {
@@ -150,7 +185,7 @@ export async function syncWithClickUp(
         localIsMs !== remoteIsMs ||
         !sameDay(l.start, remoteStart) ||
         !sameDay(l.end, remoteEnd) ||
-        l.priority !== remotePriority ||
+        l.priority !== rPriority ||
         (l.description ?? '') !== (r.description ?? '') ||
         (l.status !== undefined && l.status !== r.status?.status) ||
         addIds.length > 0 || remIds.length > 0 ||
@@ -182,7 +217,13 @@ export async function syncWithClickUp(
           report.errors.push(`updateTask(${r.id}): ${String(e)}`)
         }
       }
-      next.push({ ...l })
+      // Pull-only fields still follow ClickUp. The status type is only trusted
+      // while the status name agrees; a local status change sets its own type.
+      next.push({
+        ...l,
+        timeEstimate: remoteEstimate(r),
+        ...(l.status === r.status?.status ? { statusType: r.status?.type } : {}),
+      })
     }
   }
 
@@ -219,25 +260,7 @@ export async function syncWithClickUp(
   const linkedCuids = new Set(next.map(t => t.clickupId).filter((x): x is string => !!x))
   for (const r of remote) {
     if (linkedCuids.has(r.id)) continue
-    const remoteIsMs = isRemoteMilestone(r)
-    const rStart = fromClickUpDate(r.start_date)
-    const rEnd = fromClickUpDate(r.due_date)
-    const msDate = rEnd ?? rStart
-    next.push({
-      id: crypto.randomUUID(),
-      clickupId: r.id,
-      name: r.name,
-      type: remoteIsMs ? 'milestone' : 'task',
-      start: (remoteIsMs ? msDate : rStart) ?? undefined,
-      end: (remoteIsMs ? msDate : rEnd) ?? undefined,
-      progress: 0,
-      status: r.status?.status,
-      statusColor: r.status?.color,
-      priority: r.priority?.orderindex ? (Number(r.priority.orderindex) as 1 | 2 | 3 | 4) : undefined,
-      assignees: r.assignees?.map(a => ({ id: a.id, username: a.username })),
-      tags: r.tags?.map(t => ({ name: t.name, tag_bg: t.tag_bg, tag_fg: t.tag_fg })),
-      description: r.description,
-    })
+    next.push(mapRemoteTask(r, crypto.randomUUID()))
     report.added++
   }
 

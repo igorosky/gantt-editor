@@ -27,6 +27,10 @@ export interface GanttTask {
   assignees?: Assignee[]
   tags?: Tag[]
   description?: string
+  // Pull-only from ClickUp: status.type ('open' | 'custom' | 'closed' | 'done')
+  // and the time estimate in ms. Never pushed back.
+  statusType?: string
+  timeEstimate?: number
 }
 
 export interface ClickUpConfig {
@@ -44,7 +48,7 @@ export type CriticalScope = 'project' | 'view'
 
 export type FilterType =
   | 'status' | 'tag' | 'assignee' | 'priority' | 'name'
-  | 'due' | 'start' | 'deps' | 'unscheduled'
+  | 'due' | 'start' | 'deps' | 'unscheduled' | 'overdue'
 
 export interface Filter {
   id: string

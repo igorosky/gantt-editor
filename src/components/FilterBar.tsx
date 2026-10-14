@@ -26,6 +26,7 @@ const FILTER_TYPES: { type: FilterType; label: string; icon: string }[] = [
   { type: 'start',       label: 'Start date',    icon: '⤒' },
   { type: 'deps',        label: 'Dependencies',  icon: '⇢' },
   { type: 'unscheduled', label: 'Unscheduled',   icon: '◌' },
+  { type: 'overdue',     label: 'Overdue',       icon: '⧖' },
 ]
 
 const DEFAULT_OP: Record<FilterType, string> = {
@@ -38,6 +39,7 @@ const DEFAULT_OP: Record<FilterType, string> = {
   start:       'after',
   deps:        'has',
   unscheduled: 'is',
+  overdue:     'is',
 }
 
 function newFilter(type: FilterType): Filter {
@@ -53,7 +55,8 @@ function newFilter(type: FilterType): Filter {
     case 'due':
     case 'start':       value = null; break
     case 'deps':
-    case 'unscheduled': value = null; break
+    case 'unscheduled':
+    case 'overdue':     value = null; break
   }
   return { id, type, op, value }
 }
@@ -341,12 +344,13 @@ function ChipSummary({ f, allTasks }: { f: Filter; allTasks: GanttTask[] }) {
     }
     case 'deps':
     case 'unscheduled':
+    case 'overdue':
       return null
   }
 }
 
 function chipOpLabel(f: Filter): string | null {
-  if (f.type === 'unscheduled') return null
+  if (f.type === 'unscheduled' || f.type === 'overdue') return null
   const m: Record<string, string> = {
     is: 'is', isNot: 'is not',
     has: 'has', none: 'has no',

@@ -162,7 +162,7 @@ function StatusSelector({
   showWhenEmpty,
 }: {
   value: string | undefined
-  onChange: (v: string) => void
+  onChange: (s: ClickUpStatus) => void
   token: string | undefined
   listId: string | undefined
   showWhenEmpty?: boolean
@@ -234,7 +234,7 @@ function StatusSelector({
             <button
               key={s.status}
               className={value === s.status ? 'is-active' : ''}
-              onClick={() => { onChange(s.status); setOpen(false) }}
+              onClick={() => { onChange(s); setOpen(false) }}
               type="button"
             >
               <span className="tdp-status-dot" style={{ background: s.color }} />
@@ -369,7 +369,7 @@ export function TaskDetailPopup({ task, allTasks, onClose, onUpdate, onCommit, i
           }
           <StatusSelector
             value={task.status}
-            onChange={v => onUpdate({ status: v })}
+            onChange={s => onUpdate({ status: s.status, statusColor: s.color, statusType: s.type })}
             token={clickupToken}
             listId={clickupListId}
             showWhenEmpty={isCreateMode}

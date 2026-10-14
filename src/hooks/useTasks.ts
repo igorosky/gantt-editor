@@ -15,10 +15,11 @@ function addDays(d: Date, n: number): Date {
   return r
 }
 
-function deserialize(raw: string): GanttTask[] {
-  const parsed = JSON.parse(raw) as Array<Record<string, unknown>>
-  return parsed.map(t => ({
-    ...(t as Omit<GanttTask, 'start' | 'end' | 'assignees'>),
+// One task parsed from JSON: ISO dates back to Date, old string assignees
+// wrapped with the -1 sentinel id.
+export function reviveTask<T extends GanttTask = GanttTask>(t: Record<string, unknown>): T {
+  return {
+    ...(t as Omit<T, 'start' | 'end' | 'assignees'>),
     start: t.start ? new Date(t.start as string) : undefined,
     end: t.end ? new Date(t.end as string) : undefined,
     assignees: Array.isArray(t.assignees)
@@ -26,7 +27,12 @@ function deserialize(raw: string): GanttTask[] {
           typeof a === 'string' ? { id: -1, username: a } : (a as Assignee)
         )
       : undefined,
-  }))
+  } as T
+}
+
+export function deserialize(raw: string): GanttTask[] {
+  const parsed = JSON.parse(raw) as Array<Record<string, unknown>>
+  return parsed.map(t => reviveTask(t))
 }
 
 function loadFromStorage(): GanttTask[] {

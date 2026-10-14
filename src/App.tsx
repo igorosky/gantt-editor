@@ -7,6 +7,12 @@ import { Divider } from './components/Divider'
 import { ClickUpSettings } from './components/ClickUpSettings'
 import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
+import { WorkloadStrip } from './components/WorkloadStrip'
+import { PortfolioView } from './components/portfolio/PortfolioView'
+import type { GanttGeometry } from './components/GanttPanel'
+import { useHashRoute } from './hooks/useHashRoute'
+import { usePortfolio } from './hooks/usePortfolio'
+import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
 import { syncWithClickUp } from './lib/sync'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
@@ -30,6 +36,19 @@ function loadCritical(): { on: boolean; scope: CriticalScope } {
   return { on: false, scope: 'project' }
 }
 
+const LOAD_STRIP_KEY = 'gantt-load-strip'
+
+function loadStripPrefs(): { on: boolean; metric: WorkloadMetric } {
+  try {
+    const raw = localStorage.getItem(LOAD_STRIP_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as { on?: boolean; metric?: WorkloadMetric }
+      return { on: !!p.on, metric: p.metric === 'hours' ? 'hours' : 'count' }
+    }
+  } catch { /* malformed entry */ }
+  return { on: false, metric: 'count' }
+}
+
 export default function App() {
   const { tasks, setTasks, commitTask, removeTask, updateTask, reorderTask, clearTasks } = useTasks()
   const { config, setConfig } = useClickUpConfig()
@@ -51,6 +70,12 @@ export default function App() {
       : EMPTY_CRITICAL),
     [criticalOn, criticalScope, tasks, filteredTasks],
   )
+  const [route, navigate] = useHashRoute()
+  const portfolio = usePortfolio(tasks, config)
+  const [loadStripOn, setLoadStripOn] = useState(() => loadStripPrefs().on)
+  const [loadMetric, setLoadMetric] = useState<WorkloadMetric>(() => loadStripPrefs().metric)
+  const [ganttGeometry, setGanttGeometry] = useState<GanttGeometry | null>(null)
+  const [ganttContainer, setGanttContainer] = useState<HTMLElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const taskListRef = useRef<HTMLDivElement>(null)
   const isSyncingRef = useRef(false)
@@ -62,6 +87,12 @@ export default function App() {
       localStorage.setItem(CRITICAL_KEY, JSON.stringify({ on: criticalOn, scope: criticalScope }))
     } catch { /* quota */ }
   }, [criticalOn, criticalScope])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOAD_STRIP_KEY, JSON.stringify({ on: loadStripOn, metric: loadMetric }))
+    } catch { /* quota */ }
+  }, [loadStripOn, loadMetric])
 
   const onSync = useCallback(async () => {
     if (!config?.token || !config.listId) return
@@ -148,6 +179,7 @@ export default function App() {
   )
 
   const handleContainerReady = useCallback((ganttContainer: HTMLElement) => {
+    setGanttContainer(ganttContainer)
     const listEl = taskListRef.current
     if (!listEl) return
 
@@ -188,6 +220,24 @@ export default function App() {
           <img src="/logo-header.png" alt="" className="app__logo-img" />
           Gantt Editor
         </span>
+        <div className="app__views" role="group" aria-label="View">
+          <button
+            type="button"
+            className={`app__view-btn${route.view === 'board' ? ' app__view-btn--on' : ''}`}
+            aria-pressed={route.view === 'board'}
+            onClick={() => navigate({ view: 'board' })}
+          >
+            Board
+          </button>
+          <button
+            type="button"
+            className={`app__view-btn${route.view === 'portfolio' ? ' app__view-btn--on' : ''}`}
+            aria-pressed={route.view === 'portfolio'}
+            onClick={() => navigate({ view: 'portfolio', tab: route.view === 'portfolio' ? route.tab : 'overview' })}
+          >
+            Portfolio
+          </button>
+        </div>
         <div className="app__header-spacer" />
         {lastReport && (
           <span
@@ -212,13 +262,15 @@ export default function App() {
             {syncing ? 'Syncing…' : 'Sync now'}
           </button>
         )}
-        <button
-          className="app__export-btn"
-          onClick={() => setExportOpen(true)}
-          type="button"
-        >
-          Export
-        </button>
+        {route.view === 'board' && (
+          <button
+            className="app__export-btn"
+            onClick={() => setExportOpen(true)}
+            type="button"
+          >
+            Export
+          </button>
+        )}
         <button
           className="app__settings-btn"
           onClick={() => setSettingsOpen(true)}
@@ -227,6 +279,16 @@ export default function App() {
           ClickUp
         </button>
       </header>
+      {route.view === 'portfolio' ? (
+        <PortfolioView
+          pf={portfolio}
+          tab={route.tab}
+          onTab={tab => navigate({ view: 'portfolio', tab })}
+          onOpenBoard={() => navigate({ view: 'board' })}
+          onOpenSettings={() => setSettingsOpen(true)}
+          cu={config}
+        />
+      ) : (<>
       <div className="app__body" ref={containerRef}>
         <div className="app__panel app__panel--left" style={{ width: `${leftPct}%` }}>
           <TaskPanel
@@ -260,9 +322,23 @@ export default function App() {
             onToggleCritical={() => setCriticalOn(v => !v)}
             criticalScope={criticalScope}
             onCriticalScopeChange={setCriticalScope}
+            onGeometry={setGanttGeometry}
+            loadStripOn={loadStripOn}
+            onToggleLoadStrip={() => setLoadStripOn(v => !v)}
           />
         </div>
       </div>
+      {loadStripOn && (
+        <WorkloadStrip
+          tasks={filteredTasks}
+          geometry={ganttGeometry}
+          container={ganttContainer}
+          metric={loadMetric}
+          onMetric={setLoadMetric}
+          onClose={() => setLoadStripOn(false)}
+        />
+      )}
+      </>)}
       <ClickUpSettings
         open={settingsOpen}
         config={config}

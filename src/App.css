@@ -458,6 +458,12 @@
   border-color: #e55;
 }
 
+/* Overdue: the due date (always the last field) turns red */
+.task-row--overdue .task-row__dates > .task-row__date-field:last-child .task-row__date-input {
+  color: var(--critical);
+  font-weight: 600;
+}
+
 .task-row__delete {
   color: #ccc;
   font-size: 12px;
@@ -972,6 +978,113 @@
   border-color: var(--critical);
   color: var(--critical);
 }
+
+.gantt-panel__load-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #444;
+  background: #fff;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.gantt-panel__load-btn:hover,
+.gantt-panel__load-btn--active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+/* Workload strip under the board (see WorkloadStrip.tsx) */
+.load-strip {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.load-strip__lhs {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.load-strip__title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.load-strip__close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+.load-strip__close:hover { background: var(--surface-3); color: var(--text); }
+
+.load-strip__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.load-strip__plot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+.load-strip__svg { display: block; will-change: transform; }
+.load-strip__hit { fill: transparent; }
+.load-strip__hit:hover { fill: rgba(20, 22, 60, 0.04); }
+.load-strip__hit.is-now { fill: rgba(124, 133, 245, 0.07); }
+.load-strip__val { font-size: 11px; font-weight: 600; fill: var(--text-mid); font-variant-numeric: tabular-nums; }
+
+/* Header view switch: Board | Portfolio */
+.app__views {
+  display: inline-flex;
+  margin-left: 20px;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.app__view-btn {
+  padding: 4px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #a6adc8;
+  background: transparent;
+  border-right: 1px solid #45475a;
+}
+.app__view-btn:last-child { border-right: none; }
+.app__view-btn:hover { color: #cdd6f4; background: #313244; }
+.app__view-btn--on,
+.app__view-btn--on:hover { color: #fff; background: var(--accent); }
 
 .gantt-panel__crit-scope {
   display: flex;

@@ -1,4 +1,5 @@
 import type { Filter, GanttTask, TaskType } from './types'
+import { isOverdue } from './lib/portfolio'
 
 export const isMilestone = (t: GanttTask): boolean => t.type === 'milestone'
 
@@ -58,6 +59,8 @@ export function taskMatchesFilter(task: GanttTask, f: Filter): boolean {
     }
     case 'unscheduled':
       return !task.start || !task.end
+    case 'overdue':
+      return isOverdue(task, new Date())
   }
 }
 

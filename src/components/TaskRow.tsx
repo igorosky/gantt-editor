@@ -3,6 +3,7 @@ import type { GanttTask } from '../types'
 import { GANTT_ROW_HEIGHT } from '../constants'
 import { isMilestone } from '../utils'
 import { getTaskWarnings } from '../lib/warnings'
+import { daysLate } from '../lib/portfolio'
 import { DatePicker } from './DatePicker'
 import { TaskWarnings } from './TaskWarnings'
 
@@ -42,10 +43,12 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
 
   const ms = isMilestone(task)
   const warnings = getTaskWarnings(task)
+  const late = daysLate(task, new Date())
+  const lateNote = late ? ` - overdue by ${late} day${late === 1 ? '' : 's'}` : ''
 
   return (
     <div
-      className={`task-row${isDragOver ? ' task-row--drag-over' : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}`}
+      className={`task-row${isDragOver ? ' task-row--drag-over' : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}${late ? ' task-row--overdue' : ''}`}
       style={{ height: GANTT_ROW_HEIGHT }}
       draggable
       onDragStart={() => onDragStart(index)}
@@ -95,7 +98,7 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
             <DatePicker
               value={task.end}
               onChange={d => onUpdate({ start: d, end: d })}
-              title="Milestone date"
+              title={`Milestone date${lateNote}`}
               highlightEmpty
             />
           </>
@@ -111,7 +114,7 @@ export function TaskRow({ task, index, onUpdate, onRemove, onOpenDetail, onDragS
             <DatePicker
               value={task.end}
               onChange={d => onUpdate({ end: d, ...(task.start && d && d < task.start ? { start: d } : {}) })}
-              title="Due date"
+              title={`Due date${lateNote}`}
               highlightEmpty
             />
           </>
