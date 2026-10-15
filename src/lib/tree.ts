@@ -176,7 +176,7 @@ export function canBecomeTopLevel(t: GanttTask): boolean {
 
 export const TOP_LEVEL_BLOCKED =
   'This is a subtask in ClickUp, and ClickUp\'s API cannot make it a top-level task. ' +
-  'Use "Convert to > Parent task" in ClickUp, then sync.'
+  'Use "Convert to > Parent task" in ClickUp, then Pull.'
 
 export type DropPosition = 'before' | 'after' | 'inside' | 'inside-first'
 

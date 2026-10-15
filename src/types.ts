@@ -22,8 +22,8 @@ export interface GanttTask {
   dependencies?: string[]
   // Local id of the parent task; absent means top level
   parentId?: string
-  // ClickUp parent id as of the last sync: null = top level, absent = never
-  // synced with hierarchy. Baseline for the three-way merge of parentId.
+  // ClickUp parent id as of the last pull / push: null = top level, absent =
+  // never synced with hierarchy. Lets the risk checks tell who moved a task.
   remoteParent?: string | null
   clickupId?: string
   status?: string
@@ -44,6 +44,8 @@ export interface ClickUpConfig {
   spaceId: string
   folder: string | 'folderless'
   listId: string
+  // Last successful pull or push (ISO): the baseline the pull / push risk
+  // checks compare ClickUp's date_updated against
   lastSyncAt?: string
 }
 
@@ -62,14 +64,46 @@ export interface Filter {
   value: unknown
 }
 
+// Pull copies ClickUp onto the board, push copies the board onto ClickUp
+export type SyncDirection = 'pull' | 'push'
+
+export type SyncLogKind =
+  | 'updated' // fields copied over (pull: board from ClickUp, push: ClickUp from board)
+  | 'added' // pull: new board row for a ClickUp-only task
+  | 'removed' // pull: deleted in ClickUp, removed from the board
+  | 'created' // push: new ClickUp task for a board-only row
+  | 'moved' // parent changed
+  | 'dep-added'
+  | 'dep-removed'
+  | 'skipped'
+  | 'info'
+  | 'error'
+
+// Display strings, oriented in the direction of the copy
+export interface SyncFieldChange {
+  field: string
+  from: string
+  to: string
+}
+
+export interface SyncLogEntry {
+  kind: SyncLogKind
+  task?: string // task name
+  taskId?: string // local id, when the row is (still) on the board
+  clickupId?: string
+  changes?: SyncFieldChange[]
+  detail?: string
+}
+
+// One pull or push, as kept in the sync log
 export interface SyncReport {
-  added: number
-  updatedFromRemote: number
-  pushedToRemote: number
-  deletedLocal: number
-  createdRemote: number
-  depsAdded: number
-  depsAddedFromRemote: number
-  errors: string[]
+  id: string
+  direction: SyncDirection
+  at: string // ISO start time
   durationMs: number
+  entries: SyncLogEntry[]
+  // Fatal failure (e.g. the fetch); nothing was applied
+  aborted?: string
+  // Entries dropped to keep the stored log small
+  truncated?: number
 }

@@ -7,17 +7,22 @@ import { Divider } from './components/Divider'
 import { ClickUpSettings } from './components/ClickUpSettings'
 import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
+import { SyncLogDialog } from './components/SyncLogDialog'
+import { SyncConfirmDialog } from './components/SyncConfirmDialog'
 import { WorkloadStrip } from './components/WorkloadStrip'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
 import { useHashRoute } from './hooks/useHashRoute'
 import { usePortfolio } from './hooks/usePortfolio'
+import { useSyncLog } from './hooks/useSyncLog'
 import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
-import { syncWithClickUp } from './lib/sync'
+import { latestUpdate, pullFromClickUp, pullRisks, pushRisks, pushToClickUp } from './lib/sync'
+import { getAllTasks, type RemoteTask } from './lib/clickup'
+import { runFailed, runSummary } from './lib/syncLog'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
 import { buildTree, descendants, flattenTree } from './lib/tree'
-import type { CriticalScope, Filter, GanttTask, SyncReport } from './types'
+import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
 
 const MIN_PCT = 15
@@ -74,8 +79,17 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false)
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
   const [newTaskDraft, setNewTaskDraft] = useState<GanttTask | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [lastReport, setLastReport] = useState<SyncReport | null>(null)
+  const [syncBusy, setSyncBusy] = useState<SyncDirection | null>(null)
+  // Fetched ClickUp list held while the user decides on a risky pull / push
+  const [syncConfirm, setSyncConfirm] = useState<{
+    direction: SyncDirection
+    remote: RemoteTask[]
+    risks: SyncLogEntry[]
+    startedAt: string
+    fetchMs: number
+  } | null>(null)
+  const [syncLogOpen, setSyncLogOpen] = useState(false)
+  const syncLog = useSyncLog()
   const [filters, setFilters] = useState<Filter[]>([])
   const [matchMode, setMatchMode] = useState<'all' | 'any'>('all')
   const filteredTasks = useMemo(() => applyFilters(tasks, filters, matchMode), [tasks, filters, matchMode])
@@ -110,6 +124,9 @@ export default function App() {
   const isSyncingRef = useRef(false)
   const scrollCleanupRef = useRef<(() => void) | null>(null)
   const lhsFocusIdRef = useRef<string | null>(null)
+  // Pull / push read the newest tasks after awaiting the fetch or a confirm
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
 
   useEffect(() => {
     try {
@@ -147,30 +164,74 @@ export default function App() {
     } catch { /* quota */ }
   }, [loadStripOn, loadMetric])
 
-  const onSync = useCallback(async () => {
+  // Applies a pull or push to the fetched list, then logs it. lastSyncAt is the
+  // baseline the next risk check compares ClickUp's date_updated against; it
+  // never goes below ClickUp's own clock, so a client clock behind ClickUp's
+  // does not make the tasks just written look changed in ClickUp.
+  const applySync = useCallback(async (
+    direction: SyncDirection, remote: RemoteTask[], startedAt: string, fetchMs: number,
+  ) => {
     if (!config?.token || !config.listId) return
-    setSyncing(true)
+    setSyncBusy(direction)
     const t0 = performance.now()
     try {
-      const report = await syncWithClickUp(config, tasks, setTasks)
-      setLastReport(report)
-      setConfig({ ...config, lastSyncAt: new Date().toISOString() })
+      let entries: SyncLogEntry[]
+      let clock: number
+      if (direction === 'pull') {
+        const res = pullFromClickUp(tasksRef.current, remote)
+        setTasks(res.tasks)
+        entries = res.entries
+        clock = latestUpdate(remote)
+      } else {
+        const res = await pushToClickUp(config, tasksRef.current, remote)
+        // Patch by id, so edits made while the push ran survive
+        setTasks(prev => prev.map(t => {
+          const p = res.patches.get(t.id)
+          return p ? { ...t, ...p } : t
+        }))
+        entries = res.entries
+        clock = res.latestUpdate
+      }
+      setConfig({ ...config, lastSyncAt: new Date(Math.max(Date.now(), clock)).toISOString() })
+      syncLog.addRun({ direction, at: startedAt, durationMs: fetchMs + performance.now() - t0, entries })
     } catch (e) {
-      setLastReport({
-        added: 0,
-        updatedFromRemote: 0,
-        pushedToRemote: 0,
-        deletedLocal: 0,
-        createdRemote: 0,
-        depsAdded: 0,
-        depsAddedFromRemote: 0,
-        errors: [String(e)],
-        durationMs: performance.now() - t0,
+      syncLog.addRun({
+        direction, at: startedAt, durationMs: fetchMs + performance.now() - t0, entries: [],
+        aborted: e instanceof Error ? e.message : String(e),
       })
     } finally {
-      setSyncing(false)
+      setSyncBusy(null)
     }
-  }, [config, tasks, setTasks, setConfig])
+  }, [config, setTasks, setConfig, syncLog.addRun])
+
+  // Fetches the list, then applies straight away unless the operation would
+  // overwrite changes made on the other side, which needs a confirmation
+  const startSync = useCallback(async (direction: SyncDirection) => {
+    if (!config?.token || !config.listId || syncBusy) return
+    setSyncBusy(direction)
+    const startedAt = new Date().toISOString()
+    const t0 = performance.now()
+    let remote: RemoteTask[]
+    try {
+      remote = await getAllTasks(config.token, config.listId)
+    } catch (e) {
+      syncLog.addRun({
+        direction, at: startedAt, durationMs: performance.now() - t0, entries: [],
+        aborted: e instanceof Error ? e.message : String(e),
+      })
+      setSyncBusy(null)
+      return
+    }
+    const fetchMs = performance.now() - t0
+    const lastSyncMs = config.lastSyncAt ? Date.parse(config.lastSyncAt) : 0
+    const risks = (direction === 'pull' ? pullRisks : pushRisks)(tasksRef.current, remote, lastSyncMs)
+    if (risks.length) {
+      setSyncBusy(null)
+      setSyncConfirm({ direction, remote, risks, startedAt, fetchMs })
+      return
+    }
+    await applySync(direction, remote, startedAt, fetchMs)
+  }, [config, syncBusy, applySync, syncLog.addRun])
 
   const handleResize = useCallback((deltaX: number) => {
     const containerWidth = containerRef.current?.offsetWidth ?? window.innerWidth
@@ -293,10 +354,8 @@ export default function App() {
     }
   }, [])
 
-  const reportSummary = (r: SyncReport): string =>
-    r.errors.length === 0
-      ? `+${r.added} from CU · ${r.createdRemote} → CU · ${r.updatedFromRemote} pulled · ${r.pushedToRemote} pushed · ${r.deletedLocal} removed · ${r.depsAdded + r.depsAddedFromRemote} deps`
-      : `Sync errors: ${r.errors[0]}${r.errors.length > 1 ? ` (+${r.errors.length - 1} more)` : ''}`
+  const lastRun = syncLog.runs[0]
+  const clickUpReady = !!config?.token && !!config.listId
 
   return (
     <div className="app">
@@ -324,29 +383,36 @@ export default function App() {
           </button>
         </div>
         <div className="app__header-spacer" />
-        {lastReport && (
-          <span
-            className={`app__sync-report${lastReport.errors.length ? ' app__sync-report--err' : ''}`}
-            title={lastReport.errors.join('\n') || undefined}
-          >
-            {reportSummary(lastReport)}
-          </span>
-        )}
-        {config?.lastSyncAt && (
-          <span className="app__sync-stamp">
-            Last sync: {new Date(config.lastSyncAt).toLocaleTimeString()}
-          </span>
-        )}
-        {config?.token && config.listId && (
+        {clickUpReady && lastRun && (
           <button
-            className="app__sync-btn"
-            onClick={onSync}
-            disabled={syncing}
             type="button"
+            className={`app__sync-report${runFailed(lastRun) ? ' app__sync-report--err' : ''}`}
+            title="Open sync log"
+            onClick={() => setSyncLogOpen(true)}
           >
-            {syncing ? 'Syncing…' : 'Sync now'}
+            {runSummary(lastRun)}
           </button>
         )}
+        {clickUpReady && (<>
+          <button
+            className="app__sync-btn"
+            onClick={() => startSync('pull')}
+            disabled={!!syncBusy}
+            type="button"
+            title="Pull from ClickUp: the board takes ClickUp's fields, subtasks and dependencies, adds new ClickUp tasks and drops tasks deleted there. Nothing is written to ClickUp."
+          >
+            {syncBusy === 'pull' ? '↓ Pulling…' : '↓ Pull'}
+          </button>
+          <button
+            className="app__sync-btn"
+            onClick={() => startSync('push')}
+            disabled={!!syncBusy}
+            type="button"
+            title="Push to ClickUp: ClickUp takes the board's fields, subtasks and dependencies, and board-only tasks are created there. Nothing is deleted in ClickUp."
+          >
+            {syncBusy === 'push' ? '↑ Pushing…' : '↑ Push'}
+          </button>
+        </>)}
         {route.view === 'board' && (
           <button
             className="app__export-btn"
@@ -443,6 +509,27 @@ export default function App() {
         }}
         onClose={() => setSettingsOpen(false)}
       />
+      {syncConfirm && (
+        <SyncConfirmDialog
+          direction={syncConfirm.direction}
+          risks={syncConfirm.risks}
+          onCancel={() => setSyncConfirm(null)}
+          onConfirm={() => {
+            const c = syncConfirm
+            setSyncConfirm(null)
+            void applySync(c.direction, c.remote, c.startedAt, c.fetchMs)
+          }}
+        />
+      )}
+      {syncLogOpen && (
+        <SyncLogDialog
+          runs={syncLog.runs}
+          onClose={() => setSyncLogOpen(false)}
+          onClear={syncLog.clear}
+          onOpenTask={id => { setSyncLogOpen(false); setDetailTaskId(id) }}
+          taskIds={new Set(tasks.map(t => t.id))}
+        />
+      )}
       {exportOpen && (
         <ExportDialog
           tasks={visibleTasks}

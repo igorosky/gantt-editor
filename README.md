@@ -66,11 +66,12 @@ Sync is optional and configured entirely from the app UI (the "ClickUp" button i
 
 1. Enter a personal ClickUp API token.
 2. Pick a Workspace, then a Space, then a Folder (or "folderless"), then a List.
-3. Use "Sync now" to pull/push tasks between the app and that ClickUp list.
+3. Use "↓ Pull" to copy that ClickUp list onto the board (ClickUp wins, nothing is written to ClickUp) and "↑ Push" to copy the board onto ClickUp (the board wins). Each asks for confirmation first if it would overwrite changes made on the other side.
+4. The summary next to the buttons opens the sync log: the last 20 pulls / pushes with every task and field that changed.
 
 The token is stored in `localStorage`, which is convenient for a personal tool but readable by any script that runs on the page (e.g. via XSS) — keep that in mind before using it against a shared or sensitive workspace.
 
-See `CLAUDE.md` for a detailed breakdown of the sync engine's conflict resolution rules and field coverage.
+See `CLAUDE.md` for a detailed breakdown of the pull / push rules and field coverage.
 
 ### Portfolio
 
