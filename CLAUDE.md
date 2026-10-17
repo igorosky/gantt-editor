@@ -46,6 +46,7 @@ Local fork changes:
 - `_placeholder` task support (see Dateless tasks section below).
 - `milestone.js` (new file) + `make_bars` dispatch on `_milestone` (see Milestones section below).
 - Subtasks: `get_all_dependent_tasks` also follows a task's `_drag_with` ids (its subtasks), so they move live with a dragged parent; the mousedown drag group filters ids without a bar; `Bar.draw_span()` draws `rect.bar-span` under a bar when `task._span = { start, end }` is set, shifted in `update_bar_position`; `update_bar_position` skips predecessors without a bar (it dereferenced `get_bar(dep).$bar` unguarded).
+- `Bar.compute_start_end_date()` / `Milestone.compute_start_end_date()` `Math.round` the unit counts before `date_utils.add`, which `parseInt`s: Week view float math gives e.g. 60.99999 for day 61, so a dropped bar landed a day early.
 - `Bar.refresh()` rewrites the group's `class` attribute wholesale instead of `classList.add(custom_class)`. The original threw `InvalidCharacterError` on a multi-token `custom_class` (`'milestone critical'`) and never dropped a token removed since the last refresh.
 
 **Alignment constants** (`src/constants.ts`): frappe-gantt row/header geometry hardcoded in library. `GANTT_ROW_HEIGHT` (48px) and `GANTT_HEADER_HEIGHT` (85px) must stay in sync with frappe-gantt defaults. LHS `TaskPanel` header height = `GANTT_HEADER_HEIGHT + GANTT_TOOLBAR_HEIGHT` to account for toolbar above gantt.
@@ -54,8 +55,9 @@ Local fork changes:
 
 **Dependency propagation** (`src/utils.ts`, `GanttPanel.tsx`, `App.tsx`):
 - `getAllSuccessors(taskId, tasks)` — shared BFS, returns all transitive successors.
-- `GanttPanel` `on_date_change`: distinguishes drag vs resize via ±2s heuristic on `durationDelta` (frappe-gantt applies −1s adjustment to end dates). Drag → propagates `startDelta` to `dragClosure` (successors + subtasks, transitively); right-edge resize → propagates `durationDelta` to successors only; left-edge resize → propagates nothing. Lookups go through `allTasks`, so collapsed / filtered-out rows move too. Guards skip tasks with undefined dates.
-- `App.handleTaskUpdate`: LHS end date change propagates end delta to all transitive successors. Guards skip tasks with undefined dates.
+- Stored dates carry mixed times of day (LHS pickers: local midnight; frappe drag/resize: start 00:00, end 23:59:59; ClickUp: e.g. 4 am), so everything here works in **whole local calendar days**: `daysBetween` to compare, `shiftDays` (`src/lib/dates.ts`, keeps the time of day) to move. Never raw ms deltas, which break across DST and between a 23:59:59 and a midnight end. Dates go to frappe as the local day (`isoDay`), never `toISOString` (UTC day, one off for local midnight east of UTC).
+- `GanttPanel` `on_date_change`: drag = start and end moved by the same days → shifts `dragClosure` (successors + subtasks, transitively); right-edge resize (start unchanged) → shifts successors only by the end's days; left-edge resize → propagates nothing. Lookups go through `allTasks`, so collapsed / filtered-out rows move too. Guards skip tasks with undefined dates.
+- `App.handleTaskUpdate`: LHS end date change shifts all transitive successors by the end's day delta. Guards skip tasks with undefined dates.
 
 **Connect mode** (`GanttPanel.tsx`): click-to-connect for creating/removing dependency arrows. Uses `ganttClickRef` reassigned every render so frappe-gantt's `on_click` always has fresh closure. `connectModeRef`/`connectSourceRef` are refs (not state) for frappe-gantt callbacks; `connectMode`/`connectSource` are state for React re-renders. Escape cancels connect mode.
 

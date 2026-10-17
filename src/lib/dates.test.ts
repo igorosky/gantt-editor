@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addDays, autoUnit, daysBetween, startOfWeek, unitBoundaries, unitStarts,
+  addDays, autoUnit, daysBetween, isoDay, shiftDays, startOfWeek, unitBoundaries, unitStarts,
 } from './dates'
 
 // npm test runs with TZ=Europe/Warsaw so the DST cases below are real:
@@ -18,6 +18,21 @@ describe('dates', () => {
     expect(daysBetween(new Date(2026, 9, 24), new Date(2026, 9, 26))).toBe(2)
     expect(addDays(new Date(2026, 9, 24), 2)).toEqual(new Date(2026, 9, 26))
     expect(addDays(new Date(2026, 9, 24), 2).getHours()).toBe(0)
+  })
+
+  it('formats the local day, whatever the time of day', () => {
+    // Local midnight is the previous day in UTC here
+    expect(isoDay(new Date(2026, 9, 17))).toBe('2026-10-17')
+    expect(isoDay(new Date(2026, 9, 17, 4))).toBe('2026-10-17')
+    expect(isoDay(new Date(2026, 9, 17, 23, 59, 59))).toBe('2026-10-17')
+    expect(isoDay(new Date(2026, 0, 5))).toBe('2026-01-05')
+  })
+
+  it('shifts by calendar days keeping the time of day across DST', () => {
+    expect(shiftDays(new Date(2026, 9, 20), 7)).toEqual(new Date(2026, 9, 27))
+    expect(shiftDays(new Date(2026, 9, 20, 23, 59, 59), 7)).toEqual(new Date(2026, 9, 27, 23, 59, 59))
+    expect(shiftDays(new Date(2026, 9, 27, 4), -7)).toEqual(new Date(2026, 9, 20, 4))
+    expect(shiftDays(new Date(2026, 2, 27), 3)).toEqual(new Date(2026, 2, 30))
   })
 
   it('lists month starts covering the range', () => {

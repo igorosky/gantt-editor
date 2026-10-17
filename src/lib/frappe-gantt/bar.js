@@ -439,17 +439,20 @@ export default class Bar {
 
     compute_start_end_date() {
         const bar = this.$bar;
+        // Local fix: x and width are snapped to whole units, but the float
+        // math can give 60.99999 for 61 and date_utils.add parseInt's it,
+        // landing a day early. Round first.
         const x_in_units = bar.getX() / this.gantt.config.column_width;
         let new_start_date = date_utils.add(
             this.gantt.gantt_start,
-            x_in_units * this.gantt.config.step,
+            Math.round(x_in_units * this.gantt.config.step),
             this.gantt.config.unit,
         );
 
         const width_in_units = bar.getWidth() / this.gantt.config.column_width;
         const new_end_date = date_utils.add(
             new_start_date,
-            width_in_units * this.gantt.config.step,
+            Math.round(width_in_units * this.gantt.config.step),
             this.gantt.config.unit,
         );
 

@@ -22,6 +22,7 @@ import { getAllTasks, type RemoteTask } from './lib/clickup'
 import { runFailed, runSummary } from './lib/syncLog'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
 import { buildTree, descendants, flattenTree } from './lib/tree'
+import { daysBetween, shiftDays } from './lib/dates'
 import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
 
@@ -248,14 +249,16 @@ export default function App() {
       if ('end' in patch && patch.end !== undefined) {
         const prev = tasks.find(t => t.id === id)
         if (prev && prev.end !== undefined) {
-          const delta = patch.end.getTime() - prev.end.getTime()
-          if (delta !== 0) {
+          // In calendar days: the old end may carry a time of day (23:59:59
+          // after a drag, 4 am from ClickUp) the picked date does not
+          const days = daysBetween(prev.end, patch.end)
+          if (days !== 0) {
             for (const sid of getAllSuccessors(id, tasks)) {
               const s = tasks.find(t => t.id === sid)
               if (s && s.start && s.end) {
                 updateTask(sid, {
-                  start: new Date(s.start.getTime() + delta),
-                  end: new Date(s.end.getTime() + delta),
+                  start: shiftDays(s.start, days),
+                  end: shiftDays(s.end, days),
                 })
               }
             }

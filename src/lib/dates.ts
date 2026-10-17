@@ -20,6 +20,14 @@ export function addDays(d: Date, n: number): Date {
   return x
 }
 
+// Moves a date by whole calendar days, keeping its time of day (unlike
+// addDays), so a DST change in between never moves the wall clock.
+export function shiftDays(d: Date, n: number): Date {
+  const x = new Date(d)
+  x.setDate(x.getDate() + n)
+  return x
+}
+
 // Rounded so DST transitions never shift a day by an hour.
 export function daysBetween(a: Date, b: Date): number {
   return Math.round((startOfDay(b).getTime() - startOfDay(a).getTime()) / DAY_MS)
@@ -47,6 +55,13 @@ export function fmtDate(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0')
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   return `${dd}.${mm}.${d.getFullYear()}`
+}
+
+// Local calendar day as YYYY-MM-DD (toISOString would give the UTC day).
+export function isoDay(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
 }
 
 // Short day label: "14 Oct".

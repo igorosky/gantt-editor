@@ -88,9 +88,10 @@ export default class Milestone extends Bar {
         const { column_width, step, unit } = this.gantt.config;
         const centre = this.$bar.getX() + this.$bar.getWidth() / 2;
         const x_in_units = (centre - this.day_width() / 2) / column_width;
+        // Rounded as in Bar.compute_start_end_date (parseInt would truncate)
         const date = date_utils.add(
             this.gantt.gantt_start,
-            x_in_units * step,
+            Math.round(x_in_units * step),
             unit,
         );
         return { new_start_date: date, new_end_date: date };

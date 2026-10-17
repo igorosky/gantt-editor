@@ -5,10 +5,7 @@ import type { CriticalScope, GanttTask } from '../types'
 import { getAllSuccessors, isMilestone } from '../utils'
 import { edgeKey } from '../lib/criticalPath'
 import { buildTree, descendants, dragClosure, subtreeSpan, type TreeRow } from '../lib/tree'
-
-function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
+import { daysBetween, isoDay, shiftDays } from '../lib/dates'
 
 // Column layout of the rendered chart, for widgets drawn in step with it
 export interface GanttGeometry {
@@ -216,13 +213,13 @@ export function GanttPanel({
         // A milestone carries a single date; it is drawn as a diamond by the
         // Milestone bar subclass in the vendored frappe-gantt fork.
         const d = (t.end ?? t.start)!
-        return { id: t.id, name: t.name, start: toDateStr(d), end: toDateStr(d),
+        return { id: t.id, name: t.name, start: isoDay(d), end: isoDay(d),
                  progress: 0, dependencies: deps, _milestone: true, ...extra }
       }
       const span = isParent ? subtreeSpan(t.id, tree) : null
-      return { id: t.id, name: t.name, start: toDateStr(t.start!), end: toDateStr(t.end!),
+      return { id: t.id, name: t.name, start: isoDay(t.start!), end: isoDay(t.end!),
                progress: t.progress, dependencies: deps, ...extra,
-               ...(span ? { _span: { start: toDateStr(span.start), end: toDateStr(span.end) } } : {}) }
+               ...(span ? { _span: { start: isoDay(span.start), end: isoDay(span.end) } } : {}) }
     }) as FrappeGanttNS.Task[]
 
     if (tasks.length === 0) {
@@ -298,30 +295,22 @@ export function GanttPanel({
           const newEnd = prev && isMilestone(prev) ? start : end
           onDateChangeRef.current(task.id, start, newEnd)
           if (prev && prev.start && prev.end) {
-            const startDelta = start.getTime() - prev.start.getTime()
-            const prevDuration = prev.end.getTime() - prev.start.getTime()
-            const newDuration = newEnd.getTime() - start.getTime()
-            const durationDelta = newDuration - prevDuration
-            // Pure drag: start shifted, duration unchanged (within 2s for frappe-gantt's -1s end artifact)
+            // Whole calendar days, so stored times of day (frappe's 23:59:59
+            // ends, ClickUp's 4 am) and DST changes never skew the comparison
+            const startDays = daysBetween(prev.start, start)
+            const endDays = daysBetween(prev.end, newEnd)
+            // Drag: both ends moved by the same days
             //   -> successors and subtasks (also hidden ones) move along
-            // Right-edge resize: start unchanged, end moved → durationDelta equals end delta
-            //   -> successors only; subtasks keep their dates
-            // Left-edge resize: start changed, duration also changed → both conditions false, no propagation
-            const isDrag = startDelta !== 0 && Math.abs(durationDelta) < 2000
-            const propagateDelta =
-              isDrag ? startDelta :
-              startDelta === 0 && Math.abs(durationDelta) >= 2000 ? durationDelta :
-              0
-            if (propagateDelta !== 0) {
+            // Right-edge resize: only the end moved -> successors only; subtasks keep their dates
+            // Left-edge resize: start moved, end did not -> no propagation
+            const isDrag = startDays !== 0 && startDays === endDays
+            const days = isDrag ? startDays : startDays === 0 ? endDays : 0
+            if (days !== 0) {
               const moved = isDrag ? dragClosure(task.id, allTasks) : getAllSuccessors(task.id, allTasks)
               for (const sid of moved) {
                 const s = allTasks.find(t => t.id === sid)
                 if (s && s.start && s.end) {
-                  onDateChangeRef.current(
-                    sid,
-                    new Date(s.start.getTime() + propagateDelta),
-                    new Date(s.end.getTime() + propagateDelta),
-                  )
+                  onDateChangeRef.current(sid, shiftDays(s.start, days), shiftDays(s.end, days))
                 }
               }
             }
