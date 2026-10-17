@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react'
-import type { Assignee, GanttTask } from '../types'
+import { useCallback, useState, useEffect } from 'react'
+import type { Assignee, GanttTask, PendingDeletion } from '../types'
+import type { RemoteTask } from '../lib/clickup'
+import { prunePending, recordDeletion, restoreDeletion } from '../lib/deletions'
 import {
   indentTask as indentIn, moveTask as moveIn, outdentTask as outdentIn,
   removeSubtree, setParent, type DropPosition,
 } from '../lib/tree'
 
 const STORAGE_KEY = 'gantt-tasks'
+const PENDING_KEY = 'gantt-pending-deletions'
 
 function today(): Date {
   const d = new Date()
@@ -57,12 +60,35 @@ function loadFromStorage(): GanttTask[] {
   ]
 }
 
+function loadPending(): PendingDeletion[] {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((d): d is Record<string, unknown> => !!d && typeof d === 'object' && Array.isArray((d as PendingDeletion).tasks))
+          .map(d => ({ ...(d as unknown as PendingDeletion), tasks: (d.tasks as Array<Record<string, unknown>>).map(t => reviveTask(t)) }))
+      }
+    }
+  } catch { /* malformed entry */ }
+  return []
+}
+
 export function useTasks() {
   const [tasks, setTasks] = useState<GanttTask[]>(loadFromStorage)
+  // Linked tasks deleted on the board, until Push settles them or they are restored
+  const [pending, setPending] = useState<PendingDeletion[]>(loadPending)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
   }, [tasks])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PENDING_KEY, JSON.stringify(pending))
+    } catch { /* quota */ }
+  }, [pending])
 
   function addTask() {
     const t = today()
@@ -82,10 +108,34 @@ export function useTasks() {
     setTasks(prev => [...prev, t])
   }
 
-  // Removes the task together with all its subtasks
+  // Removes the task together with all its subtasks. Linked ones become a
+  // pending deletion, which the next push asks about.
   function removeTask(id: string) {
+    const now = new Date()
+    setPending(p => recordDeletion(p, tasks, id, now))
     setTasks(prev => removeSubtree(prev, id))
   }
+
+  // Puts a pending deletion back on the board; all of them newest first, so
+  // every one lands where it was
+  function restorePending(id?: string) {
+    const list = id === undefined ? [...pending].reverse() : pending.filter(d => d.id === id)
+    if (!list.length) return
+    setTasks(prev => list.reduce(restoreDeletion, prev))
+    const done = new Set(list.map(d => d.id))
+    setPending(p => p.filter(d => !done.has(d.id)))
+  }
+
+  // Stable, since the sync callbacks depend on them
+  const dropPending = useCallback((ids: Iterable<string>) => {
+    const gone = new Set(ids)
+    if (gone.size) setPending(p => p.filter(d => !gone.has(d.id)))
+  }, [])
+
+  // Drops pending deletions with nothing left in the fetched ClickUp list
+  const prunePendingFor = useCallback((remote: RemoteTask[]) => {
+    setPending(p => prunePending(p, remote))
+  }, [])
 
   function updateTask(id: string, patch: Partial<GanttTask>) {
     setTasks(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
@@ -107,12 +157,15 @@ export function useTasks() {
     setTasks(prev => outdentIn(prev, id))
   }
 
+  // A local reset: nothing is queued for deletion in ClickUp
   function clearTasks() {
     setTasks([])
+    setPending([])
   }
 
   return {
     tasks, setTasks, addTask, commitTask, removeTask, updateTask,
     moveTask, setTaskParent, indentTask, outdentTask, clearTasks,
+    pending, restorePending, dropPending, prunePendingFor,
   }
 }

@@ -10,6 +10,8 @@ import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
 import { SyncLogDialog } from './components/SyncLogDialog'
 import { SyncConflictDialog } from './components/SyncConflictDialog'
+import { SyncDeleteDialog } from './components/SyncDeleteDialog'
+import { PendingDeletionsDialog } from './components/PendingDeletionsDialog'
 import { WorkloadStrip } from './components/WorkloadStrip'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
@@ -20,7 +22,8 @@ import { useSettings } from './hooks/useSettings'
 import { withoutBacklog } from './lib/settings'
 import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
-import { latestUpdate, pullFromClickUp, pushToClickUp } from './lib/sync'
+import { latestUpdate, pullFromClickUp, pushToClickUp, type DeletionDecision } from './lib/sync'
+import { pendingCuids, planDeletions, type DeletionCandidate } from './lib/deletions'
 import { findConflicts, resolveConflicts, type Resolution, type SyncConflict } from './lib/conflicts'
 import { getAllTasks, type RemoteTask } from './lib/clickup'
 import { runFailed, runSummary } from './lib/syncLog'
@@ -76,7 +79,7 @@ function loadCollapsed(): Set<string> {
 export default function App() {
   const {
     tasks, setTasks, commitTask, removeTask, updateTask, moveTask, setTaskParent,
-    indentTask, outdentTask, clearTasks,
+    indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor,
   } = useTasks()
   const { config, setConfig } = useClickUpConfig()
   const { settings, setSettings } = useSettings()
@@ -87,15 +90,20 @@ export default function App() {
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
   const [newTaskDraft, setNewTaskDraft] = useState<GanttTask | null>(null)
   const [syncBusy, setSyncBusy] = useState<SyncDirection | null>(null)
-  // Fetched ClickUp list held while the user resolves the conflicts
-  const [syncConflicts, setSyncConflicts] = useState<{
+  // Fetched ClickUp list held while the user resolves the conflicts, then
+  // answers the deletion questions of a push
+  const [pendingSync, setPendingSync] = useState<{
     direction: SyncDirection
     remote: RemoteTask[]
-    conflicts: SyncConflict[]
     startedAt: string
     fetchMs: number
+    conflicts: SyncConflict[]
+    resolution?: { conflicts: SyncConflict[]; picks: Map<string, Resolution> }
+    deletions: DeletionCandidate[]
+    stage: 'conflicts' | 'deletions'
   } | null>(null)
   const [syncLogOpen, setSyncLogOpen] = useState(false)
+  const [pendingOpen, setPendingOpen] = useState(false)
   const syncLog = useSyncLog()
   const [filters, setFilters] = useState<Filter[]>([])
   const [matchMode, setMatchMode] = useState<'all' | 'any'>('all')
@@ -148,6 +156,8 @@ export default function App() {
   // Pull / push read the newest tasks after awaiting the fetch or a confirm
   const tasksRef = useRef(tasks)
   tasksRef.current = tasks
+  const pendingRef = useRef(pending)
+  pendingRef.current = pending
 
   useEffect(() => {
     try {
@@ -186,13 +196,15 @@ export default function App() {
   }, [loadStripOn, loadMetric])
 
   // Applies a pull or push to the fetched list, then logs it. Resolved
-  // conflicts (`resolution`) override what the operation would do. lastSyncAt
+  // conflicts (`resolution`) override what the operation would do; a push
+  // deletes in ClickUp what `deletions` confirms. lastSyncAt
   // is the fallback baseline for tasks without a syncBase; it never goes below
   // ClickUp's own clock, so a client clock behind ClickUp's does not make the
   // tasks just written look changed in ClickUp.
   const applySync = useCallback(async (
     direction: SyncDirection, remote: RemoteTask[], startedAt: string, fetchMs: number,
     resolution?: { conflicts: SyncConflict[]; picks: Map<string, Resolution> },
+    deletions?: DeletionDecision[],
   ) => {
     if (!config?.token || !config.listId) return
     setSyncBusy(direction)
@@ -204,17 +216,18 @@ export default function App() {
       let entries: SyncLogEntry[]
       let clock: number
       if (direction === 'pull') {
-        const res = pullFromClickUp(tasksRef.current, remote, resolved?.overrides)
+        const res = pullFromClickUp(tasksRef.current, remote, resolved?.overrides, pendingCuids(pendingRef.current))
         setTasks(res.tasks)
         entries = res.entries
         clock = latestUpdate(remote)
       } else {
-        const res = await pushToClickUp(config, tasksRef.current, remote, resolved?.overrides)
+        const res = await pushToClickUp(config, tasksRef.current, remote, resolved?.overrides, deletions)
         // Patch by id, so edits made while the push ran survive
         setTasks(prev => prev.map(t => {
           const p = res.patches.get(t.id)
           return p ? { ...t, ...p } : t
         }))
+        dropPending(res.settled)
         entries = res.entries
         clock = res.latestUpdate
       }
@@ -229,10 +242,11 @@ export default function App() {
     } finally {
       setSyncBusy(null)
     }
-  }, [config, setTasks, setConfig, syncLog.addRun])
+  }, [config, setTasks, setConfig, syncLog.addRun, dropPending])
 
   // Fetches the list, then applies straight away unless the operation would
-  // overwrite changes made on the other side, which the user resolves first
+  // overwrite changes made on the other side, which the user resolves first,
+  // or a push would delete tasks deleted on the board, which the user confirms
   const startSync = useCallback(async (direction: SyncDirection) => {
     if (!config?.token || !config.listId || syncBusy) return
     setSyncBusy(direction)
@@ -250,15 +264,20 @@ export default function App() {
       return
     }
     const fetchMs = performance.now() - t0
+    prunePendingFor(remote)
     const lastSyncMs = config.lastSyncAt ? Date.parse(config.lastSyncAt) : 0
     const conflicts = findConflicts(direction, tasksRef.current, remote, lastSyncMs)
-    if (conflicts.length) {
+    const deletions = direction === 'push' ? planDeletions(pendingRef.current, tasksRef.current, remote) : []
+    if (conflicts.length || deletions.length) {
       setSyncBusy(null)
-      setSyncConflicts({ direction, remote, conflicts, startedAt, fetchMs })
+      setPendingSync({
+        direction, remote, startedAt, fetchMs, conflicts, deletions,
+        stage: conflicts.length ? 'conflicts' : 'deletions',
+      })
       return
     }
     await applySync(direction, remote, startedAt, fetchMs)
-  }, [config, syncBusy, applySync, syncLog.addRun])
+  }, [config, syncBusy, applySync, syncLog.addRun, prunePendingFor])
 
   const handleResize = useCallback((deltaX: number) => {
     const containerWidth = containerRef.current?.offsetWidth ?? window.innerWidth
@@ -422,6 +441,16 @@ export default function App() {
             {runSummary(lastRun)}
           </button>
         )}
+        {pending.length > 0 && (
+          <button
+            type="button"
+            className="app__sync-report app__sync-report--pending"
+            title="Tasks deleted on the board that ClickUp still has: restore them, or Push to delete them in ClickUp"
+            onClick={() => setPendingOpen(true)}
+          >
+            🗑 {pending.length} pending deletion{pending.length === 1 ? '' : 's'}
+          </button>
+        )}
         {clickUpReady && (<>
           <button
             className="app__sync-btn"
@@ -437,7 +466,7 @@ export default function App() {
             onClick={() => startSync('push')}
             disabled={!!syncBusy}
             type="button"
-            title="Push to ClickUp: ClickUp takes the board's fields, subtasks and dependencies, and board-only tasks are created there. Nothing is deleted in ClickUp."
+            title="Push to ClickUp: ClickUp takes the board's fields, subtasks and dependencies, and board-only tasks are created there. Tasks deleted on the board are deleted in ClickUp only after you confirm each one."
           >
             {syncBusy === 'push' ? '↑ Pushing…' : '↑ Push'}
           </button>
@@ -558,16 +587,43 @@ export default function App() {
           onClose={() => setAppSettingsOpen(false)}
         />
       )}
-      {syncConflicts && (
+      {pendingSync?.stage === 'conflicts' && (
         <SyncConflictDialog
-          direction={syncConflicts.direction}
-          conflicts={syncConflicts.conflicts}
-          onCancel={() => setSyncConflicts(null)}
+          direction={pendingSync.direction}
+          conflicts={pendingSync.conflicts}
+          onCancel={() => setPendingSync(null)}
           onApply={picks => {
-            const c = syncConflicts
-            setSyncConflicts(null)
-            void applySync(c.direction, c.remote, c.startedAt, c.fetchMs, { conflicts: c.conflicts, picks })
+            const s = pendingSync
+            const resolution = { conflicts: s.conflicts, picks }
+            if (s.deletions.length) {
+              setPendingSync({ ...s, resolution, stage: 'deletions' })
+              return
+            }
+            setPendingSync(null)
+            void applySync(s.direction, s.remote, s.startedAt, s.fetchMs, resolution)
           }}
+        />
+      )}
+      {pendingSync?.stage === 'deletions' && (
+        <SyncDeleteDialog
+          candidates={pendingSync.deletions}
+          onCancel={() => setPendingSync(null)}
+          onDone={decisions => {
+            const s = pendingSync
+            setPendingSync(null)
+            void applySync(
+              s.direction, s.remote, s.startedAt, s.fetchMs, s.resolution,
+              s.deletions.map(candidate => ({ candidate, remove: decisions.get(candidate.id) ?? false })),
+            )
+          }}
+        />
+      )}
+      {pendingOpen && (
+        <PendingDeletionsDialog
+          pending={pending}
+          onRestore={id => restorePending(id)}
+          onRestoreAll={() => restorePending()}
+          onClose={() => setPendingOpen(false)}
         />
       )}
       {syncLogOpen && (

@@ -2,10 +2,13 @@ import type { ClickUpConfig, GanttTask, SyncBase, SyncFieldChange, SyncLogEntry 
 import { buildTree, ancestors, TOP_LEVEL_BLOCKED } from './tree'
 import { fmtDate } from './dates'
 import { clipText } from './syncLog'
+import type { DeletionCandidate } from './deletions'
 import {
   addDependency,
   addTagToTask,
+  ClickUpError,
   createTask,
+  deleteTask,
   fromClickUpDate,
   MILESTONE_ITEM_ID,
   removeDependency,
@@ -333,15 +336,22 @@ export interface PullResult {
 
 // Pure: the board after copying ClickUp onto it. Linked rows take ClickUp's
 // fields, parent and dependencies; rows deleted in ClickUp go; ClickUp-only
-// tasks are added; board-only rows are left alone. `overrides` (resolved
+// tasks are added, except the ones deleted on the board (`pending`, see
+// deletions.ts); board-only rows are left alone. `overrides` (resolved
 // conflicts) replace what ClickUp would set. The base always records
 // ClickUp's state, so a value kept or merged on the board is a board edit
 // that the next push sends.
-export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[], overrides?: Overrides): PullResult {
+export function pullFromClickUp(
+  localTasks: GanttTask[],
+  remote: RemoteTask[],
+  overrides?: Overrides,
+  pending?: ReadonlySet<string>,
+): PullResult {
   const entries: SyncLogEntry[] = []
   const remoteById = new Map(remote.map(r => [r.id, r]))
   const next: GanttTask[] = []
   let unlinked = 0
+  let held = 0
 
   for (const l of localTasks) {
     if (!l.clickupId) {
@@ -367,6 +377,10 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[], o
   const added = new Set<string>()
   for (const r of remote) {
     if (linked.has(r.id)) continue
+    if (pending?.has(r.id)) {
+      held++
+      continue
+    }
     const t = mapRemoteTask(r, crypto.randomUUID())
     t.syncBase = syncBaseOf(t, remotePreds(r))
     next.push(t)
@@ -431,6 +445,12 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[], o
   if (unlinked) {
     entries.push({ kind: 'info', detail: `${plural(unlinked, 'board task')} not in ClickUp yet; Push creates them` })
   }
+  if (held) {
+    entries.push({
+      kind: 'info',
+      detail: `${plural(held, 'ClickUp task')} deleted on the board left off it; Push asks whether to delete them in ClickUp, Pending deletions restores them`,
+    })
+  }
 
   // New rows go last, in dependency order
   const existingIds = new Set(localTasks.map(t => t.id))
@@ -450,18 +470,28 @@ export interface PushResult {
   entries: SyncLogEntry[]
   // Newest date_updated among ClickUp's write responses (ms), 0 when none
   latestUpdate: number
+  // Pending deletions that are done with: kept in ClickUp or deleted there
+  settled: string[]
+}
+
+// The user's answer to one deletion question
+export interface DeletionDecision {
+  candidate: DeletionCandidate
+  remove: boolean
 }
 
 // Copies the board onto ClickUp: changed fields of linked rows, new tasks for
 // board-only rows (parents first), parents, and dependencies (added and
 // removed). A task deleted in ClickUp is not recreated. `overrides` (resolved
 // conflicts) are applied to the board first, so ClickUp and the board both
-// end up with the decided values.
+// end up with the decided values. Tasks deleted on the board are deleted in
+// ClickUp last, and only those the user confirmed (`deletions`).
 export async function pushToClickUp(
   config: Pick<ClickUpConfig, 'token' | 'listId'>,
   boardTasks: GanttTask[],
   remote: RemoteTask[],
   overrides?: Overrides,
+  deletions: DeletionDecision[] = [],
 ): Promise<PushResult> {
   const { token, listId } = config
   const entries: SyncLogEntry[] = []
@@ -661,10 +691,51 @@ export async function pushToClickUp(
     patch(t.id, { syncBase: { ...(fieldBase.get(t.id) ?? t.syncBase), deps: depsPrint(after) } })
   }
 
-  const remoteOnly = remote.filter(r => !localOf.has(r.id)).length
+  // Tasks deleted on the board, last, so the subtasks moved out of them above
+  // survive. A task inside a subtree deleted earlier in this run is gone
+  // already; so is one ClickUp answers 404 for.
+  const gone = new Set<string>()
+  const held = new Set<string>()
+  const settled: string[] = []
+  for (const { candidate: c, remove } of deletions) {
+    if (!remove) {
+      settled.push(c.id)
+      entries.push({ kind: 'skipped', task: c.name, detail: 'Deleted on the board; kept in ClickUp, Pull brings it back' })
+      continue
+    }
+    let failed = false
+    for (const cuid of c.deleteCuids) {
+      if (gone.has(cuid)) continue
+      try {
+        await deleteTask(token, cuid)
+        gone.add(cuid)
+      } catch (e) {
+        if (e instanceof ClickUpError && e.status === 404) {
+          gone.add(cuid)
+          continue
+        }
+        failed = true
+        const name = c.tasks.find(t => t.cuid === cuid)?.name ?? c.name
+        entries.push({ kind: 'error', task: name, clickupId: cuid, detail: `Delete failed: ${errText(e)}` })
+      }
+    }
+    if (failed) {
+      for (const t of c.tasks) held.add(t.cuid)
+      continue
+    }
+    for (const x of c.doomed) gone.add(x)
+    settled.push(c.id)
+    const more = c.doomed.length - 1
+    entries.push({
+      kind: 'deleted', task: c.name, clickupId: c.deleteCuids[0],
+      detail: more > 0 ? `with ${plural(more, 'more ClickUp task')}` : undefined,
+    })
+  }
+
+  const remoteOnly = remote.filter(r => !localOf.has(r.id) && !gone.has(r.id) && !held.has(r.id)).length
   if (remoteOnly) {
     entries.push({ kind: 'info', detail: `${plural(remoteOnly, 'ClickUp task')} not on the board; Pull adds them` })
   }
 
-  return { patches, entries, latestUpdate: latest }
+  return { patches, entries, latestUpdate: latest, settled }
 }

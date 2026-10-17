@@ -14,6 +14,7 @@ describe('syncLog', () => {
     ])
     expect(countsText(r)).toBe('1 error, 2 updated, 1 added, 1 dep added')
     expect(countsText(run([{ kind: 'info' }]))).toBe('no changes')
+    expect(countsText(run([{ kind: 'deleted' }, { kind: 'skipped' }, { kind: 'deleted' }]))).toBe('1 skipped, 2 deleted')
     expect(runFailed(r)).toBe(true)
     expect(runFailed(run([{ kind: 'updated' }]))).toBe(false)
   })

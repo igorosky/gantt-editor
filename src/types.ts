@@ -48,6 +48,17 @@ export type SyncBaseKey =
 
 export type SyncBase = Partial<Record<SyncBaseKey, string>>
 
+// A board delete of a subtree holding at least one linked task. Push asks
+// whether to delete it in ClickUp too; until then Pull keeps it off the board.
+// Snapshot of every removed row (root first, board order), so Restore can put
+// them back.
+export interface PendingDeletion {
+  id: string // root task's local id
+  deletedAt: string // ISO
+  index: number // root's position in the task array, for Restore
+  tasks: GanttTask[]
+}
+
 export interface ClickUpConfig {
   token: string
   teamId: string
@@ -81,6 +92,7 @@ export type SyncLogKind =
   | 'updated' // fields copied over (pull: board from ClickUp, push: ClickUp from board)
   | 'added' // pull: new board row for a ClickUp-only task
   | 'removed' // pull: deleted in ClickUp, removed from the board
+  | 'deleted' // push: deleted on the board, deleted in ClickUp after confirming
   | 'created' // push: new ClickUp task for a board-only row
   | 'moved' // parent changed
   | 'dep-added'

@@ -183,6 +183,11 @@ export async function updateTask(
   })
 }
 
+// Deletes the task and, in ClickUp, its subtasks
+export async function deleteTask(token: string, taskId: string): Promise<void> {
+  await request<unknown>(token, `/task/${taskId}`, { method: 'DELETE' })
+}
+
 export async function getListStatuses(token: string, listId: string): Promise<ClickUpStatus[]> {
   const r = await request<{ statuses: ClickUpStatus[] }>(token, `/list/${listId}`)
   return r.statuses ?? []

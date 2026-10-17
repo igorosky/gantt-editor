@@ -92,6 +92,11 @@
   color: #f38ba8;
 }
 
+.app__sync-report--pending,
+.app__sync-report--pending:hover {
+  color: #f9e2af;
+}
+
 .app__sync-btn,
 .app__export-btn,
 .app__settings-btn {
@@ -2478,6 +2483,91 @@
 /* Conflict resolution dialog */
 .sync-modal--conflicts {
   width: min(820px, 94vw);
+}
+
+/* Push deletion questions + pending deletions list */
+.sync-modal--delete {
+  width: min(600px, 94vw);
+}
+
+.sync-modal__foot--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.sync-delete__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sync-delete__block {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-mid);
+}
+
+.sync-delete__list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.sync-delete__warn {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid #f0d49b;
+  background: #fff7e6;
+  color: #7a5200;
+}
+
+.sync-delete__where {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sync-btn--danger-soft {
+  color: var(--critical);
+  border-color: var(--critical);
+}
+.sync-btn--danger-soft:hover:not(:disabled) { background: #fdecec; }
+
+.pending-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pending-list__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pending-list__row:last-child { border-bottom: none; }
+
+.pending-list__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pending-list__name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-list__meta {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .sync-btn--small {

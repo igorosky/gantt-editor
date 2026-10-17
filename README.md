@@ -68,7 +68,8 @@ Sync is optional and configured entirely from the app UI (the "ClickUp" button i
 1. Enter a personal ClickUp API token.
 2. Pick a Workspace, then a Space, then a Folder (or "folderless"), then a List.
 3. Use "↓ Pull" to copy that ClickUp list onto the board (ClickUp wins, nothing is written to ClickUp) and "↑ Push" to copy the board onto ClickUp (the board wins). If either would overwrite changes made on the other side, it first lists each conflict (field, parent or dependency) and lets you keep the board value, take ClickUp's, merge both (tags, assignees) or write your own (name, description). Pull still writes nothing to ClickUp: values you keep on the board go with the next Push.
-4. The summary next to the buttons opens the sync log: the last 20 pulls / pushes with every task and field that changed.
+4. Deleting a task that exists in ClickUp only removes it from the board and lists it under "🗑 pending deletions" in the header, where you can restore it. Pull leaves it off the board; Push asks about each one: delete it in ClickUp, keep it there (the next Pull brings it back), apply the same answer to all remaining ones, or cancel the push.
+5. The summary next to the buttons opens the sync log: the last 20 pulls / pushes with every task and field that changed.
 
 The token is stored in `localStorage`, which is convenient for a personal tool but readable by any script that runs on the page (e.g. via XSS) — keep that in mind before using it against a shared or sensitive workspace.
 
@@ -103,6 +104,7 @@ src/
     exportOutput.ts
     clickup.ts
     sync.ts
+    deletions.ts  board deletes waiting for Push: record, restore, plan
   utils.ts
   types.ts
   App.tsx
@@ -111,7 +113,6 @@ src/
 ## Known limitations
 
 - No baseline tracking, so dependency *removals* don't propagate between the app and ClickUp — remove them on both sides manually.
-- Local task deletion does not delete the corresponding ClickUp task.
 - No automatic rate-limit backoff against the ClickUp API.
 - No realtime sync, webhooks, or auto-polling — sync is manual, on demand.
 - ClickUp's API cannot turn a subtask back into a top-level task, so the app keeps such a task under some parent; use "Convert to > Parent task" in ClickUp, then sync.
