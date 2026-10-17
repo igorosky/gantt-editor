@@ -5,6 +5,7 @@ import { TaskPanel } from './components/TaskPanel'
 import { GanttPanel } from './components/GanttPanel'
 import { Divider } from './components/Divider'
 import { ClickUpSettings } from './components/ClickUpSettings'
+import { SettingsDialog } from './components/SettingsDialog'
 import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
 import { SyncLogDialog } from './components/SyncLogDialog'
@@ -15,6 +16,8 @@ import type { GanttGeometry } from './components/GanttPanel'
 import { useHashRoute } from './hooks/useHashRoute'
 import { usePortfolio } from './hooks/usePortfolio'
 import { useSyncLog } from './hooks/useSyncLog'
+import { useSettings } from './hooks/useSettings'
+import { withoutBacklog } from './lib/settings'
 import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
 import { latestUpdate, pullFromClickUp, pullRisks, pushRisks, pushToClickUp } from './lib/sync'
@@ -75,6 +78,8 @@ export default function App() {
     indentTask, outdentTask, clearTasks,
   } = useTasks()
   const { config, setConfig } = useClickUpConfig()
+  const { settings, setSettings } = useSettings()
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false)
   const [leftPct, setLeftPct] = useState(DEFAULT_PCT)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -93,17 +98,24 @@ export default function App() {
   const syncLog = useSyncLog()
   const [filters, setFilters] = useState<Filter[]>([])
   const [matchMode, setMatchMode] = useState<'all' | 'any'>('all')
-  const filteredTasks = useMemo(() => applyFilters(tasks, filters, matchMode), [tasks, filters, matchMode])
-  // Subtasks of a collapsed task are hidden; while filtering, the ancestors of
-  // a match are shown as context rows. Both panels get the same rows.
+  // Backlog tasks can be left off the board (Settings); pull / push still see them
+  const boardTasks = useMemo(() => withoutBacklog(tasks, settings, 'board'), [tasks, settings])
+  const filteredTasks = useMemo(
+    () => applyFilters(boardTasks, filters, matchMode),
+    [boardTasks, filters, matchMode],
+  )
+  // Subtasks of a collapsed task are hidden; while filtering (or hiding the
+  // backlog), the ancestors of a shown task appear as context rows. Both
+  // panels get the same rows.
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed)
   const tree = useMemo(() => buildTree(tasks), [tasks])
+  const narrowed = filters.length > 0 || boardTasks !== tasks
   const rows = useMemo(
     () => flattenTree(tasks, {
       collapsed,
-      include: filters.length ? new Set(filteredTasks.map(t => t.id)) : undefined,
+      include: narrowed ? new Set(filteredTasks.map(t => t.id)) : undefined,
     }),
-    [tasks, collapsed, filters.length, filteredTasks],
+    [tasks, collapsed, narrowed, filteredTasks],
   )
   const visibleTasks = useMemo(() => rows.map(r => r.task), [rows])
   const [criticalOn, setCriticalOn] = useState(() => loadCritical().on)
@@ -115,7 +127,14 @@ export default function App() {
     [criticalOn, criticalScope, tasks, filteredTasks],
   )
   const [route, navigate] = useHashRoute()
-  const portfolio = usePortfolio(tasks, config)
+  const portfolio = usePortfolio(tasks, config, settings.warnings.dodKeywords)
+  // Status names offered as backlog candidates in Settings
+  const knownStatuses = useMemo(() => {
+    const names = new Set<string>()
+    for (const t of tasks) if (t.status) names.add(t.status)
+    for (const p of portfolio.projects) for (const t of p.tasks) if (t.status) names.add(t.status)
+    return [...names]
+  }, [tasks, portfolio.projects])
   const [loadStripOn, setLoadStripOn] = useState(() => loadStripPrefs().on)
   const [loadMetric, setLoadMetric] = useState<WorkloadMetric>(() => loadStripPrefs().metric)
   const [ganttGeometry, setGanttGeometry] = useState<GanttGeometry | null>(null)
@@ -427,6 +446,14 @@ export default function App() {
         )}
         <button
           className="app__settings-btn"
+          onClick={() => setAppSettingsOpen(true)}
+          type="button"
+          title="Warnings, calendar, backlog and portfolio rules"
+        >
+          Settings
+        </button>
+        <button
+          className="app__settings-btn"
           onClick={() => setSettingsOpen(true)}
           type="button"
         >
@@ -441,6 +468,7 @@ export default function App() {
           onOpenBoard={() => navigate({ view: 'board' })}
           onOpenSettings={() => setSettingsOpen(true)}
           cu={config}
+          settings={settings}
         />
       ) : (<>
       <div className="app__body" ref={containerRef}>
@@ -468,6 +496,7 @@ export default function App() {
             onOpenDetail={(id) => setDetailTaskId(id)}
             listRef={taskListRef}
             criticalIds={critical.taskIds}
+            settings={settings}
           />
         </div>
         <Divider onResize={handleResize} />
@@ -489,6 +518,7 @@ export default function App() {
             onGeometry={setGanttGeometry}
             loadStripOn={loadStripOn}
             onToggleLoadStrip={() => setLoadStripOn(v => !v)}
+            calendar={settings.calendar}
           />
         </div>
       </div>
@@ -500,6 +530,7 @@ export default function App() {
           metric={loadMetric}
           onMetric={setLoadMetric}
           onClose={() => setLoadStripOn(false)}
+          settings={settings}
         />
       )}
       </>)}
@@ -512,6 +543,14 @@ export default function App() {
         }}
         onClose={() => setSettingsOpen(false)}
       />
+      {appSettingsOpen && (
+        <SettingsDialog
+          settings={settings}
+          knownStatuses={knownStatuses}
+          onSave={next => { setSettings(next); setAppSettingsOpen(false) }}
+          onClose={() => setAppSettingsOpen(false)}
+        />
+      )}
       {syncConfirm && (
         <SyncConfirmDialog
           direction={syncConfirm.direction}
@@ -537,6 +576,7 @@ export default function App() {
         <ExportDialog
           tasks={visibleTasks}
           allTasks={tasks}
+          calendar={settings.calendar}
           onClose={() => setExportOpen(false)}
         />
       )}

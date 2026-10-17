@@ -70,6 +70,14 @@ describe('computeWorkload: hours', () => {
     expect(r.buckets[1].total).toBeCloseTo(6)
   })
 
+  it('spreads over custom working days', () => {
+    // Fri 16 - Sun 18 Oct with a Sun-Thu week: only Sunday is a working day
+    const r = computeWorkload([task({ start: d(10, 16), end: d(10, 18), timeEstimate: 6 * H })],
+      WEEKS, { metric: 'hours', keysOf: one, workdays: [0, 1, 2, 3, 4] })
+    expect(r.buckets[0].total).toBeCloseTo(6)
+    expect(r.buckets[0].items).toHaveLength(1)
+  })
+
   it('uses every day for a weekend-only task', () => {
     const r = computeWorkload([task({ start: d(10, 17), end: d(10, 18), timeEstimate: 4 * H })],
       WEEKS, { metric: 'hours', keysOf: one })
@@ -140,5 +148,11 @@ describe('workdaysIn', () => {
     expect(workdaysIn(d(10, 12), d(10, 19))).toBe(5)
     expect(workdaysIn(d(10, 17), d(10, 19))).toBe(0)
     expect(workdaysIn(d(10, 1), d(11, 1))).toBe(22)
+  })
+
+  it('counts custom working days', () => {
+    const sunThu = [0, 1, 2, 3, 4]
+    expect(workdaysIn(d(10, 12), d(10, 19), sunThu)).toBe(5)
+    expect(workdaysIn(d(10, 16), d(10, 19), sunThu)).toBe(1) // Fri, Sat, Sun
   })
 })

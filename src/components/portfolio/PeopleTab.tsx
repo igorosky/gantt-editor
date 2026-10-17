@@ -8,10 +8,12 @@ import {
   RANGE_LABEL, Seg, Tooltip, UNASSIGNED_KEY, UNIT_LABEL, assigneeKeys, assigneeNames, fmtValue,
   initials, metricLabel, presetRange, useTooltip, type RangePreset,
 } from './shared'
+import { withoutBacklog, workdayLabel, type Settings } from '../../lib/settings'
 
 interface Props {
   projects: PortfolioProject[]
   today: Date
+  settings: Settings
 }
 
 // Sequential blue ramp, light to dark: share of capacity used
@@ -29,7 +31,7 @@ function cellColor(ratio: number): { bg: string; fg: string } {
   return { bg: LOAD_RAMP[step], fg: step >= 3 ? '#fff' : 'var(--text)' }
 }
 
-export function PeopleTab({ projects, today }: Props) {
+export function PeopleTab({ projects, today, settings }: Props) {
   const [metric, setMetric] = useState<WorkloadMetric>('count')
   const [unit, setUnit] = useState<TimeUnit>('week')
   const [range, setRange] = useState<RangePreset>('around')
@@ -39,13 +41,17 @@ export function PeopleTab({ projects, today }: Props) {
   const [sel, setSel] = useState<{ key: string; index: number } | null>(null)
   const { tip, show, hide } = useTooltip()
 
-  const tasks = useMemo(() => projects.flatMap(p => p.tasks), [projects])
+  const tasks = useMemo(
+    () => withoutBacklog(projects.flatMap(p => p.tasks), settings, 'workload'),
+    [projects, settings],
+  )
   const taskById = useMemo(() => new Map<string, PortfolioTask>(tasks.map(t => [`${t.projectId}:${t.id}`, t])), [tasks])
   const projectById = useMemo(() => new Map(projects.map(p => [p.ref.listId, p])), [projects])
   const names = useMemo(() => assigneeNames(projects), [projects])
 
-  const { from, to } = useMemo(() => presetRange(range, today, tasks), [range, today, tasks])
-  const boundaries = useMemo(() => unitBoundaries(from, to, unit), [from, to, unit])
+  const { weekStart, workdays } = settings.calendar
+  const { from, to } = useMemo(() => presetRange(range, today, tasks, weekStart), [range, today, tasks, weekStart])
+  const boundaries = useMemo(() => unitBoundaries(from, to, unit, weekStart), [from, to, unit, weekStart])
 
   const result = useMemo(() => computeWorkload(
     tasks.map(t => ({
@@ -54,12 +60,12 @@ export function PeopleTab({ projects, today }: Props) {
       parentId: t.parentId && `${t.projectId}:${t.parentId}`,
     })),
     boundaries,
-    { metric, includeDone, keysOf: assigneeKeys },
-  ), [tasks, boundaries, metric, includeDone])
+    { metric, includeDone, workdays, keysOf: assigneeKeys },
+  ), [tasks, boundaries, metric, includeDone, workdays])
 
   const capacity = useMemo(
-    () => result.buckets.map(b => (metric === 'hours' ? hoursPerDay * workdaysIn(b.start, b.end) : maxTasks)),
-    [result, metric, hoursPerDay, maxTasks],
+    () => result.buckets.map(b => (metric === 'hours' ? hoursPerDay * workdaysIn(b.start, b.end, workdays) : maxTasks)),
+    [result, metric, hoursPerDay, maxTasks, workdays],
   )
   const heads = useMemo(() => result.buckets.map(b => ({
     ...bucketLabels(b, unit), isToday: containsDay(b, today),
@@ -147,7 +153,7 @@ export function PeopleTab({ projects, today }: Props) {
           </select>
         </label>
         {metric === 'hours' ? (
-          <label className="pf-select" title="Working hours per person per working day (Mon-Fri)">
+          <label className="pf-select" title={`Working hours per person per working day (${workdayLabel(workdays)})`}>
             <span>Capacity h/day</span>
             <input type="number" min={1} max={24} step={0.5} value={hoursPerDay}
               onChange={e => setHoursPerDay(Math.max(0.5, Number(e.target.value) || 8))} />

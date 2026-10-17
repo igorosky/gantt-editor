@@ -42,7 +42,7 @@ export interface Progress {
 
 // Read-only portfolio state. The current board's list always comes from the
 // live board tasks, never from the cache, so unsynced edits show up too.
-export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) {
+export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null, dodKeywords: string[]) {
   const [config, setConfig] = useState<PortfolioConfig>(loadConfig)
   const [cache, setCache] = useState<PortfolioCache>(loadCache)
   const [demo, setDemo] = useState<PortfolioProject[] | null>(null)
@@ -69,7 +69,7 @@ export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) 
     if (demo) return demo
     const board = (ref: ProjectRef, i: number): PortfolioProject => ({
       ref, color: projectColor(i), isCurrentBoard: true,
-      tasks: withParentNames(boardTasks.map(t => fromBoardTask(t, ref.listId))),
+      tasks: withParentNames(boardTasks.map(t => fromBoardTask(t, ref.listId, dodKeywords))),
     })
     if (config.refs.length === 0) {
       return [board({ listId: boardListId ?? LOCAL_BOARD_ID, name: 'Current board' }, 0)]
@@ -82,7 +82,7 @@ export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) 
         tasks: c?.tasks ?? [], fetchedAt: c?.fetchedAt, error: c?.error,
       }
     })
-  }, [demo, config.refs, cache, boardTasks, boardListId])
+  }, [demo, config.refs, cache, boardTasks, boardListId, dodKeywords])
 
   const hidden = useMemo(() => new Set(config.hidden), [config.hidden])
   const visible = useMemo(() => projects.filter(p => !hidden.has(p.ref.listId)), [projects, hidden])
@@ -112,7 +112,7 @@ export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) 
     if (ids.length === 0) return
     setProgress({ done: 0, total: ids.length })
     try {
-      const res = await fetchProjects(cu.token, ids, (done, total) => setProgress({ done, total }))
+      const res = await fetchProjects(cu.token, ids, (done, total) => setProgress({ done, total }), dodKeywords)
       const now = new Date().toISOString()
       setCache(prev => {
         const next = { ...prev }
@@ -135,7 +135,7 @@ export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null) 
     } finally {
       setProgress(null)
     }
-  }, [cu?.token, progress, config.refs, boardListId])
+  }, [cu?.token, progress, config.refs, boardListId, dodKeywords])
 
   const loadDemo = useCallback(() => setDemo(demoProjects(new Date())), [])
   const exitDemo = useCallback(() => setDemo(null), [])

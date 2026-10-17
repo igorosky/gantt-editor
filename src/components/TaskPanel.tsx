@@ -8,6 +8,7 @@ import {
   ancestors, canBecomeTopLevel, canOutdent, indentTarget, moveTarget, TOP_LEVEL_BLOCKED,
   type DropPosition, type Tree, type TreeRow,
 } from '../lib/tree'
+import type { Settings } from '../lib/settings'
 
 interface Props {
   rows: TreeRow[]
@@ -32,12 +33,13 @@ interface Props {
   onOpenDetail: (id: string) => void
   listRef: RefObject<HTMLDivElement>
   criticalIds: Set<string>
+  settings: Settings
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
   onAdd, onClear, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
-  onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds,
+  onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -110,7 +112,9 @@ export function TaskPanel({
       <div className="task-panel__list" ref={listRef}>
         {rows.length === 0 && (
           <p className="task-panel__empty">
-            {filters.length > 0 ? 'No tasks match your filters.' : 'No tasks yet. Add one above.'}
+            {filters.length > 0 ? 'No tasks match your filters.'
+              : allTasks.length > 0 ? 'Every task is in the backlog, which Settings hide from the board.'
+              : 'No tasks yet. Add one above.'}
           </p>
         )}
         {rows.map(row => {
@@ -138,6 +142,7 @@ export function TaskPanel({
               onDragEnd={handleDragEnd}
               dropPos={drop?.id === task.id ? drop.pos : null}
               isCritical={criticalIds.has(task.id)}
+              settings={settings}
             />
           )
         })}

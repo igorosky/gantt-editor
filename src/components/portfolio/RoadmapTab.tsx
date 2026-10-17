@@ -8,10 +8,12 @@ import { buildTree, descendants, subtreeSpan } from '../../lib/tree'
 import { RagPill } from './OverviewTab'
 import { OVER_COLOR } from './PeopleTab'
 import { Seg, Tooltip, useTooltip } from './shared'
+import type { Settings } from '../../lib/settings'
 
 interface Props {
   projects: PortfolioProject[]
   today: Date
+  settings: Settings
 }
 
 type Zoom = 'week' | 'month'
@@ -33,7 +35,7 @@ type Row =
 
 const rowH = (r: Row) => (r.kind === 'project' ? PROJECT_H : TASK_H)
 
-export function RoadmapTab({ projects, today }: Props) {
+export function RoadmapTab({ projects, today, settings }: Props) {
   const [zoom, setZoom] = useState<Zoom>('week')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   // Off: top-level tasks only, each parent showing where its subtasks lie
@@ -42,14 +44,14 @@ export function RoadmapTab({ projects, today }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const healths = useMemo(
-    () => new Map(projects.map(p => [p.ref.listId, projectHealth(p.tasks, today)])),
-    [projects, today],
+    () => new Map(projects.map(p => [p.ref.listId, projectHealth(p.tasks, today, settings)])),
+    [projects, today, settings],
   )
 
   const { from, to } = useMemo(() => {
     const todayTask: GanttTask = { id: 'today', name: '', progress: 0, start: today, end: today }
-    return fitWindow([...projects.flatMap(p => p.tasks), todayTask], zoom)
-  }, [projects, today, zoom])
+    return fitWindow([...projects.flatMap(p => p.tasks), todayTask], zoom, settings.calendar.weekStart)
+  }, [projects, today, zoom, settings.calendar.weekStart])
 
   const px = PX_PER_DAY[zoom]
   const width = (daysBetween(from, to) + 1) * px
@@ -104,11 +106,11 @@ export function RoadmapTab({ projects, today }: Props) {
     }))
   }, [from, to, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
   const lower = useMemo(
-    () => unitStarts(from, to, zoom).map(s => ({
+    () => unitStarts(from, to, zoom, settings.calendar.weekStart).map(s => ({
       x: x(s) < 0 ? 0 : x(s),
       label: zoom === 'week' ? fmtShort(s) : MONTHS[s.getMonth()],
     })),
-    [from, to, zoom], // eslint-disable-line react-hooks/exhaustive-deps
+    [from, to, zoom, settings.calendar.weekStart], // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   // Open on today

@@ -238,6 +238,106 @@
   border-color: #7c85f5;
 }
 
+/* App settings dialog (reuses the ClickUp modal frame) */
+.clickup-modal.settings {
+  width: 540px;
+}
+
+.settings__section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.settings__section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.settings__heading {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-mid);
+  margin-bottom: 8px;
+}
+
+.clickup-modal__row label.settings__check {
+  display: flex;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-mid);
+  margin-bottom: 6px;
+}
+
+.clickup-modal__row .settings__check input {
+  width: auto;
+}
+
+.settings__indent {
+  margin-left: 24px;
+}
+
+.settings__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings__chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-mid);
+}
+
+.settings__chip:hover {
+  border-color: var(--accent);
+}
+
+.settings__chip--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.settings__add {
+  margin-top: 8px;
+}
+
+.settings__grid {
+  display: grid;
+  grid-template-columns: 1fr 90px;
+  gap: 8px 12px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-mid);
+}
+
+.settings__grid input {
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.clickup-modal__actions .settings__reset {
+  margin-right: auto;
+}
+
 .clickup-modal__actions button.clickup-modal__save:disabled {
   opacity: 0.5;
   cursor: default;

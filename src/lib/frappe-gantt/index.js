@@ -390,6 +390,11 @@ export default class Gantt {
         this.config.date_format =
             this.config.view_mode.date_format || this.options.date_format;
         this.gantt_start.setHours(0, 0, 0, 0);
+        // Week columns start on the configured weekday
+        if (this.config.unit === 'day' && this.config.step === 7) {
+            const back = (this.gantt_start.getDay() - this.options.week_start + 7) % 7;
+            this.gantt_start = date_utils.add(this.gantt_start, -back, 'day');
+        }
     }
 
     setup_date_values() {
@@ -1280,9 +1285,11 @@ export default class Gantt {
                     let old_scroll_left = e.currentTarget.scrollLeft;
                     extended = true;
 
+                    // Whole columns, so week columns stay on their weekday
+                    // and the scroll compensation below matches
                     this.gantt_start = date_utils.add(
                         this.gantt_start,
-                        -this.config.extend_by_units,
+                        -this.config.extend_by_units * this.config.step,
                         this.config.unit,
                     );
                     this.setup_date_values();
@@ -1304,7 +1311,7 @@ export default class Gantt {
                     extended = true;
                     this.gantt_end = date_utils.add(
                         this.gantt_end,
-                        this.config.extend_by_units,
+                        this.config.extend_by_units * this.config.step,
                         this.config.unit,
                     );
                     this.setup_date_values();

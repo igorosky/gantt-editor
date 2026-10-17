@@ -10,8 +10,8 @@ import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
 import { edgeKey } from './criticalPath'
 import {
-  MONTHS, addDays, autoUnit, daysBetween, fmtDate, startOfDay, startOfMonth,
-  startOfWeek, unitStarts, type TimeUnit,
+  DEFAULT_CALENDAR, MONTHS, addDays, autoUnit, daysBetween, fmtDate, isWorkday, startOfDay,
+  startOfMonth, startOfWeek, unitStarts, type Calendar, type TimeUnit,
 } from './dates'
 
 // Re-exported so existing importers keep working
@@ -38,6 +38,8 @@ export interface ExportOptions {
   // Subtask level per task id, for indenting the name column. Precomputed
   // over the whole selection for the same reason as the critical path.
   depths?: ReadonlyMap<string, number>
+  // Week start for week columns, working days for the day view shading
+  calendar?: Calendar
 }
 
 export interface BuiltSvg {
@@ -148,7 +150,9 @@ function yearStarts(from: Date, to: Date): Date[] {
 
 // Window covering every dated task, padded out to whole units. Falls back to
 // today +/- 2 weeks when nothing in the selection carries a date.
-export function fitWindow(tasks: GanttTask[], unit: TimeUnit | 'auto' = 'auto'): { from: Date; to: Date } {
+export function fitWindow(
+  tasks: GanttTask[], unit: TimeUnit | 'auto' = 'auto', weekStart = DEFAULT_CALENDAR.weekStart,
+): { from: Date; to: Date } {
   let min: Date | null = null
   let max: Date | null = null
   for (const t of tasks) {
@@ -165,7 +169,7 @@ export function fitWindow(tasks: GanttTask[], unit: TimeUnit | 'auto' = 'auto'):
   const padDays = u === 'day' ? 2 : u === 'week' ? 7 : 15
   let from = addDays(min, -padDays)
   let to = addDays(max, padDays)
-  if (u === 'week') { from = startOfWeek(from); to = addDays(startOfWeek(to), 6) }
+  if (u === 'week') { from = startOfWeek(from, weekStart); to = addDays(startOfWeek(to, weekStart), 6) }
   if (u === 'month') {
     from = startOfMonth(from)
     to = addDays(new Date(to.getFullYear(), to.getMonth() + 1, 1), -1)
@@ -284,6 +288,7 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   const columns = opts.columns.includes('name') ? opts.columns : ['name' as LhsColumn, ...opts.columns]
   const lhsW = lhsWidth(columns)
   const ppd = PX_PER_DAY[opts.unit]
+  const cal = opts.calendar ?? DEFAULT_CALENDAR
   const chartW = chartWidth(opts.from, opts.to, opts.unit)
   const titleH = opts.title ? TITLE_H : 0
   const bodyY = titleH + HEADER_H
@@ -312,11 +317,10 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
     if (i % 2 === 1) parts.push(rect(0, rowTop(i), width, ROW_H, C.rowAlt))
   }
 
-  /* weekend shading (day view only) */
+  /* non-working day shading (day view only) */
   if (opts.unit === 'day' && tasks.length > 0) {
     for (const d of unitStarts(opts.from, opts.to, 'day')) {
-      const dow = d.getDay()
-      if (dow !== 0 && dow !== 6) continue
+      if (isWorkday(d, cal.workdays)) continue
       parts.push(rect(cx(x(d)), bodyY, ppd, height - bodyY, C.weekend))
     }
   }
@@ -329,7 +333,7 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   }
 
   /* vertical grid */
-  for (const d of unitStarts(opts.from, opts.to, opts.unit)) {
+  for (const d of unitStarts(opts.from, opts.to, opts.unit, cal.weekStart)) {
     const gx = cx(x(d))
     if (gx <= lhsW) continue
     parts.push(line(gx, bodyY, gx, height, C.tick, ' stroke-width="1"'))
@@ -365,7 +369,7 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
 
   // lower band: per-column tick labels
   const lowerFont = font(10)
-  const cols = unitStarts(opts.from, opts.to, opts.unit)
+  const cols = unitStarts(opts.from, opts.to, opts.unit, cal.weekStart)
   for (let i = 0; i < cols.length; i++) {
     const d = cols[i]
     const next = cols[i + 1] ?? addDays(opts.to, 1)
@@ -378,7 +382,7 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
       opts.unit === 'week' ? `${d.getDate()} ${MONTHS[d.getMonth()]}` :
       MONTHS[d.getMonth()]
     const fitted = fitText(label, w - 4, lowerFont)
-    const isWeekend = opts.unit === 'day' && (d.getDay() === 0 || d.getDay() === 6)
+    const isWeekend = opts.unit === 'day' && !isWorkday(d, cal.workdays)
     parts.push(text(cx(gx0 + w / 2), titleH + HEADER_H - 6, fitted, 10,
       isWeekend ? C.textMuted : C.textMid, { anchor: 'middle' }))
   }

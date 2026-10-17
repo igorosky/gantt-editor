@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest'
 import type { GanttTask } from '../types'
 import { addDays } from './dates'
 import {
-  daysLate, isDone, isDueSoon, isLateStart, isOverdue, projectHealth, riskItems,
+  daysLate, isDone, isDueSoon, isLateStart, isOverdue, projectHealth, riskItems, riskLabel,
   type HealthTask,
 } from './portfolio'
 import { demoProjects } from './portfolioData'
+import { DEFAULT_SETTINGS, type Settings } from './settings'
+
+const settings = (p: { rules?: Partial<Settings['rules']>; include?: Partial<Settings['backlog']['include']>; warnings?: Partial<Settings['warnings']> }): Settings => ({
+  ...DEFAULT_SETTINGS,
+  warnings: { ...DEFAULT_SETTINGS.warnings, ...p.warnings },
+  rules: { ...DEFAULT_SETTINGS.rules, ...p.rules },
+  backlog: { ...DEFAULT_SETTINGS.backlog, include: { ...DEFAULT_SETTINGS.backlog.include, ...p.include } },
+})
 
 const TODAY = new Date(2026, 9, 14, 13, 30) // mid-day on purpose
 const day = (n: number) => addDays(TODAY, n)
@@ -82,6 +90,37 @@ describe('projectHealth', () => {
     const tasks = [task(), dated(), dated(), dated()]
     expect(projectHealth(tasks, TODAY).rag).toBe('amber')
     expect(projectHealth([task(), dated(), dated(), dated(), dated()], TODAY).rag).toBe('green')
+  })
+
+  it('takes its thresholds from the settings', () => {
+    const ten = [dated({ end: day(-1), start: day(-5) }), ...Array.from({ length: 9 }, () => dated())]
+    expect(projectHealth(ten, TODAY, settings({ rules: { redOverdueShare: 0.1 } })).rag).toBe('red')
+    const unscheduled = [task(), dated(), dated(), dated()]
+    expect(projectHealth(unscheduled, TODAY, settings({ rules: { amberUnscheduledShare: 0.3 } })).rag).toBe('green')
+    const soon = [dated({ start: day(1), end: day(10) })]
+    expect(projectHealth(soon, TODAY).dueSoon).toBe(0)
+    expect(projectHealth(soon, TODAY, settings({ rules: { dueSoonDays: 10 } })).dueSoon).toBe(1)
+    expect(riskLabel('due-soon', settings({ rules: { dueSoonDays: 14 } }))).toBe('Due in 14d')
+  })
+
+  it('leaves backlog tasks out of health only when told to', () => {
+    const tasks = [
+      dated(),
+      task({ status: 'backlog', statusType: 'custom' }), // undated backlog task
+    ]
+    expect(projectHealth(tasks, TODAY).rag).toBe('amber')
+    const h = projectHealth(tasks, TODAY, settings({ include: { health: false } }))
+    expect(h).toMatchObject({ rag: 'green', total: 1, unscheduled: 0 })
+    expect(riskItems([{ id: 'p', tasks }], TODAY).map(r => r.task.status)).toEqual(['backlog'])
+    expect(riskItems([{ id: 'p', tasks }], TODAY, settings({ include: { health: false } }))).toEqual([])
+  })
+
+  it('counts quality warnings from the settings', () => {
+    const tasks = [dated({ warningIds: ['missing-dod'] }), dated({ warningIds: [], priority: 2 })]
+    expect(projectHealth(tasks, TODAY).quality).toBe(1)
+    expect(projectHealth(tasks, TODAY, settings({ warnings: { missingDod: false } })).quality).toBe(0)
+    expect(projectHealth(tasks, TODAY, settings({ warnings: { missingPriority: true } })).quality).toBe(1)
+    expect(projectHealth(tasks, TODAY, settings({ warnings: { missingDod: false, missingPriority: true } })).quality).toBe(1)
   })
 
   it('reports done and empty projects', () => {

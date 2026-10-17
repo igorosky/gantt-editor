@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { fmtDate } from '../../lib/dates'
 import {
-  RAG_LABEL, RAG_ORDER, RISK_KINDS, RISK_LABEL, isDueSoon, projectHealth, riskItems,
+  RAG_LABEL, RAG_ORDER, RISK_KINDS, isDueSoon, projectHealth, riskItems, riskLabel,
   type ProjectHealth, type Rag, type RiskKind,
 } from '../../lib/portfolio'
+import { withoutBacklog, type Settings } from '../../lib/settings'
 import { projectPath, type PortfolioProject, type PortfolioTask } from '../../lib/portfolioData'
 import { LOCAL_BOARD_ID } from '../../hooks/usePortfolio'
 import { clickupListUrl, clickupTaskUrl } from './shared'
@@ -13,6 +14,7 @@ interface Props {
   today: Date
   teamId?: string
   onOpenBoard: () => void
+  settings: Settings
 }
 
 type SortKey = 'name' | 'rag' | 'progress' | 'open' | 'overdue' | 'lateStart' | 'unscheduled'
@@ -27,7 +29,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; num?: boolean; title?: strin
   { key: 'lateStart', label: 'Late start', num: true, title: 'Start date passed, still in the initial status' },
   { key: 'unscheduled', label: 'No dates', num: true, title: 'Open tasks missing a start or due date' },
   { key: 'unassigned', label: 'Unassigned', num: true },
-  { key: 'quality', label: 'No DoD', num: true, title: 'Open tasks with no description or no Definition of Done' },
+  { key: 'quality', label: 'Missing info', num: true },
   { key: 'start', label: 'Start' },
   { key: 'end', label: 'End' },
   { key: 'milestone', label: 'Next milestone' },
@@ -59,10 +61,21 @@ function sortValue(p: PortfolioProject, h: ProjectHealth, key: SortKey): number 
   }
 }
 
-export function OverviewTab({ projects, today, teamId, onOpenBoard }: Props) {
+// Tooltip of the quality column: the task warnings switched on in Settings
+function qualityTitle(s: Settings): string {
+  const w = s.warnings
+  const parts = [
+    w.emptyDescription && 'no description',
+    w.missingDod && 'no Definition of Done',
+    w.missingPriority && 'no priority',
+  ].filter(Boolean)
+  return parts.length ? `Open tasks with ${parts.join(' or ')}` : 'All task warnings are off in Settings'
+}
+
+export function OverviewTab({ projects, today, teamId, onOpenBoard, settings }: Props) {
   const rows = useMemo(
-    () => projects.map(p => ({ p, h: projectHealth(p.tasks, today) })),
-    [projects, today],
+    () => projects.map(p => ({ p, h: projectHealth(p.tasks, today, settings) })),
+    [projects, today, settings],
   )
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rag', dir: 1 })
   const [riskProject, setRiskProject] = useState<string | null>(null)
@@ -90,14 +103,14 @@ export function OverviewTab({ projects, today, teamId, onOpenBoard }: Props) {
       k.unscheduled += h.unscheduled
       if (h.rag === 'red') k.red++
       if (h.rag === 'amber') k.amber++
-      k.due14 += p.tasks.filter(t => isDueSoon(t, today, 14)).length
+      k.due14 += withoutBacklog(p.tasks, settings, 'health').filter(t => isDueSoon(t, today, 14)).length
     }
     return k
-  }, [rows, today])
+  }, [rows, today, settings])
 
   const allRisks = useMemo(
-    () => riskItems(projects.map(p => ({ id: p.ref.listId, tasks: p.tasks })), today),
-    [projects, today],
+    () => riskItems(projects.map(p => ({ id: p.ref.listId, tasks: p.tasks })), today, settings),
+    [projects, today, settings],
   )
   const kindCounts = useMemo(() => {
     const c = Object.fromEntries(RISK_KINDS.map(k => [k, 0])) as Record<RiskKind, number>
@@ -150,7 +163,8 @@ export function OverviewTab({ projects, today, teamId, onOpenBoard }: Props) {
             <thead>
               <tr>
                 {COLUMNS.map(c => (
-                  <th key={c.key} className={c.num ? 'is-num' : undefined} title={c.title}
+                  <th key={c.key} className={c.num ? 'is-num' : undefined}
+                    title={c.key === 'quality' ? qualityTitle(settings) : c.title}
                     aria-sort={sort.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}>
                     <button type="button" onClick={() => toggleSort(c.key)}>
                       {c.label}
@@ -245,7 +259,7 @@ export function OverviewTab({ projects, today, teamId, onOpenBoard }: Props) {
             {RISK_KINDS.map(k => (
               <button key={k} type="button" aria-pressed={kinds.has(k)}
                 className={`pf-kind pf-kind--${k}${kinds.has(k) ? ' is-on' : ''}`} onClick={() => toggleKind(k)}>
-                {RISK_LABEL[k]} <span className="pf-kind__n">{kindCounts[k]}</span>
+                {riskLabel(k, settings)} <span className="pf-kind__n">{kindCounts[k]}</span>
               </button>
             ))}
           </div>
@@ -271,7 +285,7 @@ export function OverviewTab({ projects, today, teamId, onOpenBoard }: Props) {
                     </td>
                     <td>
                       <span className="pf-kind-tags">
-                        {r.kinds.map(k => <span key={k} className={`pf-kind-tag pf-kind--${k}`}>{RISK_LABEL[k]}</span>)}
+                        {r.kinds.map(k => <span key={k} className={`pf-kind-tag pf-kind--${k}`}>{riskLabel(k, settings)}</span>)}
                       </span>
                     </td>
                     <td><StatusPill task={r.task} /></td>

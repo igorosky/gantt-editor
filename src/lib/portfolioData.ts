@@ -5,7 +5,8 @@ import type { Assignee, GanttTask } from '../types'
 import { reviveTask } from '../hooks/useTasks'
 import { getAllTasks, type RemoteTask } from './clickup'
 import { mapRemoteTask } from './sync'
-import { getTaskWarnings } from './warnings'
+import { contentWarningIds } from './warnings'
+import { DEFAULT_DOD_KEYWORDS } from './settings'
 import { addDays, startOfDay } from './dates'
 
 export interface ProjectRef {
@@ -52,20 +53,24 @@ export const projectPath = (ref: ProjectRef): string =>
 
 /* -------------------------------------------------------------- mapping */
 
-const warningIds = (t: GanttTask): string[] => getTaskWarnings(t).map(w => w.id)
-
-// Cached form: warnings are computed while the description is still at hand,
-// then the description is dropped to keep localStorage small.
+// Cached form: the description checks run while the description is still at
+// hand (with the DoD keywords of that moment), then the description is dropped
+// to keep localStorage small. Which warnings show is decided later, from the
+// settings (warnings.applyWarningSettings).
 // Ids are ClickUp ids here, so the remote parent id is the local one too.
-export function toPortfolioTask(r: RemoteTask, projectId: string): PortfolioTask {
+export function toPortfolioTask(
+  r: RemoteTask, projectId: string, dodKeywords = DEFAULT_DOD_KEYWORDS,
+): PortfolioTask {
   const t = mapRemoteTask(r, r.id)
-  const ids = warningIds(t)
+  const ids = contentWarningIds(t, dodKeywords)
   delete t.description
   return { ...t, ...(r.parent ? { parentId: r.parent } : {}), projectId, warningIds: ids }
 }
 
-export function fromBoardTask(t: GanttTask, projectId: string): PortfolioTask {
-  return { ...t, projectId, warningIds: warningIds(t) }
+export function fromBoardTask(
+  t: GanttTask, projectId: string, dodKeywords = DEFAULT_DOD_KEYWORDS,
+): PortfolioTask {
+  return { ...t, projectId, warningIds: contentWarningIds(t, dodKeywords) }
 }
 
 // Fills parentName from the parent found in the same project
@@ -110,6 +115,7 @@ export async function fetchProjects(
   token: string,
   listIds: string[],
   onProgress?: (done: number, total: number) => void,
+  dodKeywords = DEFAULT_DOD_KEYWORDS,
   concurrency = 3,
 ): Promise<Record<string, FetchResult>> {
   const out: Record<string, FetchResult> = {}
@@ -122,7 +128,7 @@ export async function fetchProjects(
       try {
         const remote = await getAllTasks(token, listId)
         out[listId] = {
-          tasks: withParentNames(remote.map(r => toPortfolioTask(r, listId))),
+          tasks: withParentNames(remote.map(r => toPortfolioTask(r, listId, dodKeywords))),
           listName: remote.find(r => r.list?.name)?.list?.name,
         }
       } catch (e) {

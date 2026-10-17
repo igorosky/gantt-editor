@@ -12,10 +12,12 @@ import {
 import type { PaperName } from '../lib/exportOutput'
 import { EMPTY_CRITICAL, computeCriticalPath } from '../lib/criticalPath'
 import { buildTree, flattenTree, selectionDepths } from '../lib/tree'
+import type { Calendar } from '../lib/dates'
 
 interface Props {
   tasks: GanttTask[]      // currently visible (filters applied)
   allTasks: GanttTask[]
+  calendar: Calendar
   onClose: () => void
 }
 
@@ -74,7 +76,7 @@ function todayStamp(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-export function ExportDialog({ tasks, allTasks, onClose }: Props) {
+export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
   const stored = useMemo(loadStored, [])
 
   const [format, setFormat] = useState<Format>(stored.format)
@@ -140,7 +142,10 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
     [columnSet],
   )
 
-  const fitted = useMemo(() => fitWindow(selected, unitChoice), [selected, unitChoice])
+  const fitted = useMemo(
+    () => fitWindow(selected, unitChoice, calendar.weekStart),
+    [selected, unitChoice, calendar.weekStart],
+  )
   const from = rangeMode === 'custom' ? (customFrom ?? fitted.from) : fitted.from
   const to = rangeMode === 'custom' ? (customTo ?? fitted.to) : fitted.to
   const rangeValid = from <= to
@@ -163,7 +168,8 @@ export function ExportDialog({ tasks, allTasks, onClose }: Props) {
     criticalIds: critical.taskIds,
     criticalEdges: critical.edges,
     depths,
-  }), [columns, from, to, unit, title, showToday, showArrows, critical, depths])
+    calendar,
+  }), [columns, from, to, unit, title, showToday, showArrows, critical, depths, calendar])
 
   const built = useMemo(
     () => (selected.length && rangeValid ? buildGanttSvg(selected, opts) : null),

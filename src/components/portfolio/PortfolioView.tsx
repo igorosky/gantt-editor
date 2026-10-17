@@ -7,6 +7,7 @@ import { RoadmapTab } from './RoadmapTab'
 import { WorkloadTab } from './WorkloadTab'
 import { PeopleTab } from './PeopleTab'
 import { ProjectPicker } from './ProjectPicker'
+import type { Settings } from '../../lib/settings'
 import './Portfolio.css'
 
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
   onOpenBoard: () => void
   onOpenSettings: () => void
   cu: ClickUpConfig | null
+  settings: Settings
 }
 
 const TABS: Array<[PortfolioTab, string]> = [
@@ -35,7 +37,7 @@ function ago(iso: string | undefined, now: number): string {
   return `${Math.round(h / 24)} days ago`
 }
 
-export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu }: Props) {
+export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu, settings }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   // Fixed for the session so every chart agrees on what "today" is
   const [today] = useState(() => new Date())
@@ -131,10 +133,12 @@ export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu 
       )}
 
       <div className="pf-body">
-        {tab === 'overview' && <OverviewTab projects={visible} today={today} teamId={teamId} onOpenBoard={onOpenBoard} />}
-        {tab === 'roadmap' && <RoadmapTab projects={visible} today={today} />}
-        {tab === 'workload' && <WorkloadTab projects={visible} today={today} />}
-        {tab === 'people' && <PeopleTab projects={visible} today={today} />}
+        {tab === 'overview' && (
+          <OverviewTab projects={visible} today={today} teamId={teamId} onOpenBoard={onOpenBoard} settings={settings} />
+        )}
+        {tab === 'roadmap' && <RoadmapTab projects={visible} today={today} settings={settings} />}
+        {tab === 'workload' && <WorkloadTab projects={visible} today={today} settings={settings} />}
+        {tab === 'people' && <PeopleTab projects={visible} today={today} settings={settings} />}
       </div>
 
       {pickerOpen && cu?.token && cu.teamId && (

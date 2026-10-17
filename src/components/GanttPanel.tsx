@@ -5,13 +5,23 @@ import type { CriticalScope, GanttTask } from '../types'
 import { getAllSuccessors, isMilestone } from '../utils'
 import { edgeKey } from '../lib/criticalPath'
 import { buildTree, descendants, dragClosure, subtreeSpan, type TreeRow } from '../lib/tree'
-import { daysBetween, isoDay, shiftDays } from '../lib/dates'
+import { daysBetween, isoDay, shiftDays, type Calendar } from '../lib/dates'
 
 // Column layout of the rendered chart, for widgets drawn in step with it
 export interface GanttGeometry {
   dates: Date[] // start of every column
   columnWidth: number
 }
+
+// Fork options (week_start) and frappe's weekend shading for a calendar
+function calendarOptions(c: Calendar) {
+  return {
+    week_start: c.weekStart,
+    is_weekend: (d: Date) => !c.workdays.includes(d.getDay()),
+  }
+}
+
+const calendarKey = (c: Calendar) => `${c.weekStart}:${c.workdays.join(',')}`
 
 // Whether the task gets a bar (a dateless one is a hidden placeholder row)
 const hasBar = (t: GanttTask): boolean => (isMilestone(t) ? !!(t.end ?? t.start) : !!(t.start && t.end))
@@ -33,6 +43,7 @@ interface Props {
   onGeometry?: (g: GanttGeometry | null) => void
   loadStripOn: boolean
   onToggleLoadStrip: () => void
+  calendar: Calendar
 }
 
 export function GanttPanel({
@@ -52,6 +63,7 @@ export function GanttPanel({
   onGeometry,
   loadStripOn,
   onToggleLoadStrip,
+  calendar,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -62,13 +74,17 @@ export function GanttPanel({
   const onToggleDependencyRef = useRef(onToggleDependency)
   const onGeometryRef = useRef(onGeometry)
   const allTasksRef = useRef(allTasks)
+  const calendarRef = useRef(calendar)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
     onToggleDependencyRef.current = onToggleDependency
     onGeometryRef.current = onGeometry
     allTasksRef.current = allTasks
+    calendarRef.current = calendar
   })
+  // Calendar the live chart was built or last re-rendered with
+  const appliedCalendarRef = useRef('')
 
   // Reports the column layout whenever it changes. Called after init / refresh
   // and on scroll, since infinite padding re-renders with extra columns from
@@ -283,7 +299,9 @@ export function GanttPanel({
     } else {
       const panelHeight = containerRef.current.clientHeight
 
+      appliedCalendarRef.current = calendarKey(calendarRef.current)
       ganttRef.current = new FrappeGantt(containerRef.current, frappeTasks, {
+        ...calendarOptions(calendarRef.current),
         view_mode: 'Week',
         container_height: panelHeight,
         popup: false,
@@ -330,6 +348,23 @@ export function GanttPanel({
       emitGeometry()
     }
   }, [tasks, allTasks, rows, criticalIds, criticalEdges]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Week start / working days changed in Settings: re-render the columns in
+  // place (not through update_options, which would reset options such as
+  // container_height to their values at init)
+  useEffect(() => {
+    const gantt = ganttRef.current as any
+    const key = calendarKey(calendar)
+    if (!gantt || key === appliedCalendarRef.current) return
+    appliedCalendarRef.current = key
+    Object.assign(gantt.options, calendarOptions(calendar))
+    const gc = gantt.$container as HTMLElement | null
+    const st = gc?.scrollTop ?? 0
+    gantt.change_view_mode(undefined, true)
+    if (gc) gc.scrollTop = st
+    applyCriticalArrows()
+    emitGeometry()
+  }, [calendar]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const connectLabel = connectSource
     ? `Click the successor task  (Esc to cancel)`

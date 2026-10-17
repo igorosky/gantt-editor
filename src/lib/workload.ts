@@ -7,7 +7,7 @@
 
 import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
-import { DAY_MS, addDays, isWorkday, startOfDay } from './dates'
+import { DAY_MS, DEFAULT_WORKDAYS, addDays, isWorkday, startOfDay } from './dates'
 import { isDone, parentIdsOf } from './portfolio'
 
 export type WorkloadMetric = 'count' | 'hours'
@@ -40,6 +40,8 @@ export interface WorkloadOptions<T extends GanttTask> {
   // the count metric gives every key a full 1.
   keysOf: (t: T) => string[]
   includeDone?: boolean
+  // Days the hours metric spreads an estimate over (Date.getDay() numbers)
+  workdays?: readonly number[]
 }
 
 const HOUR_MS = 3600000
@@ -57,10 +59,12 @@ function bucketIndex(bounds: number[], ms: number): number {
   return lo
 }
 
-export function workdaysIn(start: Date, endExclusive: Date): number {
+export function workdaysIn(
+  start: Date, endExclusive: Date, workdays: readonly number[] = DEFAULT_WORKDAYS,
+): number {
   let n = 0
   for (let d = startOfDay(start); d < endExclusive; d = addDays(d, 1)) {
-    if (isWorkday(d)) n++
+    if (isWorkday(d, workdays)) n++
   }
   return n
 }
@@ -109,7 +113,7 @@ export function computeWorkload<T extends GanttTask>(
     } else {
       const days: Date[] = []
       for (let d = s; d <= e; d = addDays(d, 1)) days.push(d)
-      const work = days.filter(isWorkday)
+      const work = days.filter(d => isWorkday(d, opts.workdays))
       const spread = work.length ? work : days // weekend-only task: use every day
       const perDay = t.timeEstimate! / HOUR_MS / spread.length
       for (const d of spread) {

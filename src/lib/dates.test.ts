@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addDays, autoUnit, daysBetween, isoDay, shiftDays, startOfWeek, unitBoundaries, unitStarts,
+  addDays, autoUnit, daysBetween, isWorkday, isoDay, shiftDays, startOfWeek, unitBoundaries, unitStarts,
 } from './dates'
 
 // npm test runs with TZ=Europe/Warsaw so the DST cases below are real:
@@ -11,6 +11,23 @@ describe('dates', () => {
     expect(startOfWeek(new Date(2026, 9, 14))).toEqual(new Date(2026, 9, 12)) // Wed -> Mon
     expect(startOfWeek(new Date(2026, 9, 18))).toEqual(new Date(2026, 9, 12)) // Sun -> Mon
     expect(startOfWeek(new Date(2026, 9, 12, 15))).toEqual(new Date(2026, 9, 12))
+  })
+
+  it('weeks can start on any day', () => {
+    expect(startOfWeek(new Date(2026, 9, 14), 0)).toEqual(new Date(2026, 9, 11)) // Wed -> Sun
+    expect(startOfWeek(new Date(2026, 9, 18), 0)).toEqual(new Date(2026, 9, 18)) // Sun stays
+    expect(startOfWeek(new Date(2026, 9, 16), 6)).toEqual(new Date(2026, 9, 10)) // Fri -> Sat
+    expect(startOfWeek(new Date(2026, 9, 17), 6)).toEqual(new Date(2026, 9, 17))
+    // Across the DST change on the 25th
+    expect(unitStarts(new Date(2026, 9, 20), new Date(2026, 10, 2), 'week', 0))
+      .toEqual([new Date(2026, 9, 18), new Date(2026, 9, 25), new Date(2026, 10, 1)])
+  })
+
+  it('knows working days, Mon-Fri by default', () => {
+    expect(isWorkday(new Date(2026, 9, 16))).toBe(true) // Fri
+    expect(isWorkday(new Date(2026, 9, 17))).toBe(false) // Sat
+    expect(isWorkday(new Date(2026, 9, 16), [0, 1, 2, 3, 4])).toBe(false)
+    expect(isWorkday(new Date(2026, 9, 18), [0, 1, 2, 3, 4])).toBe(true) // Sun
   })
 
   it('counts whole days across DST changes', () => {

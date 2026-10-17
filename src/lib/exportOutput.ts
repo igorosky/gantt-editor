@@ -67,10 +67,10 @@ function fmtShort(d: Date): string {
 // Greedy split of the date window into chunks no wider than maxW, cut on unit
 // column boundaries so no column is ever sliced in half.
 function dateSlices(
-  from: Date, to: Date, unit: ExportOptions['unit'], maxW: number,
+  from: Date, to: Date, unit: ExportOptions['unit'], maxW: number, weekStart?: number,
 ): { from: Date; to: Date }[] {
   if (chartWidth(from, to, unit) <= maxW) return [{ from, to }]
-  const starts = unitStarts(from, to, unit)
+  const starts = unitStarts(from, to, unit, weekStart)
   const out: { from: Date; to: Date }[] = []
   let sliceFrom = from
   for (let i = 0; i < starts.length; i++) {
@@ -101,7 +101,7 @@ export function buildPages(
     Math.floor((geom.usableHpx - headerBlockHeight(opts)) / ROW_H),
   )
   const chartRoom = Math.max(120, geom.usableWpx - lhsWidth(opts.columns))
-  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom)
+  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom, opts.calendar?.weekStart)
 
   const pages: PageSpec[] = []
   for (let r = 0; r < Math.max(1, tasks.length); r += rowsPerPage) {
@@ -125,7 +125,7 @@ export function pageCount(
   if (!multipage) return 1
   const rowsPerPage = Math.max(1, Math.floor((geom.usableHpx - headerBlockHeight(opts)) / ROW_H))
   const chartRoom = Math.max(120, geom.usableWpx - lhsWidth(opts.columns))
-  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom)
+  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom, opts.calendar?.weekStart)
   return Math.max(1, Math.ceil(tasks.length / rowsPerPage)) * slices.length
 }
 

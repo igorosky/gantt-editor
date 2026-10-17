@@ -5,6 +5,7 @@ import { GANTT_ROW_HEIGHT } from '../constants'
 import { isMilestone } from '../utils'
 import { getTaskWarnings } from '../lib/warnings'
 import { daysLate } from '../lib/portfolio'
+import type { Settings } from '../lib/settings'
 import type { DropPosition, TreeRow } from '../lib/tree'
 import { DatePicker } from './DatePicker'
 import { TaskWarnings } from './TaskWarnings'
@@ -33,6 +34,7 @@ interface Props {
   onDragEnd: () => void
   dropPos: DropPosition | null
   isCritical: boolean
+  settings: Settings
 }
 
 interface MenuItem {
@@ -126,7 +128,7 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
 export function TaskRow({
   row, showToggles, onUpdate, onRemove, onOpenDetail, onToggleCollapsed, onAddSubtask,
   onIndent, onOutdent, onMakeTopLevel, topLevelBlocked,
-  onDragStart, onDragOver, onDrop, onDragEnd, dropPos, isCritical,
+  onDragStart, onDragOver, onDrop, onDragEnd, dropPos, isCritical, settings,
 }: Props) {
   const { task, depth, childCount, doneChildren, collapsed, context } = row
   const [editing, setEditing] = useState(false)
@@ -149,7 +151,7 @@ export function TaskRow({
   }
 
   const ms = isMilestone(task)
-  const warnings = getTaskWarnings(task)
+  const warnings = getTaskWarnings(task, settings)
   const late = daysLate(task, new Date())
   const lateNote = late ? ` - overdue by ${late} day${late === 1 ? '' : 's'}` : ''
 

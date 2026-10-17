@@ -3,23 +3,19 @@
 
 import type { GanttTask } from '../types'
 import { addDays, daysBetween, startOfDay } from './dates'
+import { DEFAULT_SETTINGS, withoutBacklog, type Settings } from './settings'
+import { applyWarningSettings } from './warnings'
 
 // Same rule as utils.isMilestone, repeated here so utils can import this module
 // (overdue filter) without an import cycle.
 const isMilestone = (t: GanttTask): boolean => t.type === 'milestone'
 
-// A task as the health rules see it. `warningIds` is precomputed for cached
-// portfolio tasks (their description is dropped); absent means no warnings.
+// A task as the health rules see it. `warningIds` (warnings.contentWarningIds)
+// is precomputed for cached portfolio tasks (their description is dropped);
+// absent means no description warnings.
 export type HealthTask = GanttTask & { warningIds?: string[] }
 
-/* ------------------------------------------------------------- RAG rules */
-
-// Red when this share of open tasks is overdue
-export const RED_OVERDUE_SHARE = 0.2
-// Amber when this share of open tasks has no start or no end date
-export const AMBER_UNSCHEDULED_SHARE = 0.25
-// "Due soon" window used by the risk list
-export const DUE_SOON_DAYS = 7
+// RAG thresholds and the due-soon window are settings (Settings.rules)
 
 /* ------------------------------------------------------------ task state */
 
@@ -53,7 +49,7 @@ export function isLateStart(t: GanttTask, today: Date): boolean {
   return startOfDay(t.start) < startOfDay(today) && isNotStarted(t)
 }
 
-export function isDueSoon(t: GanttTask, today: Date, days = DUE_SOON_DAYS): boolean {
+export function isDueSoon(t: GanttTask, today: Date, days = DEFAULT_SETTINGS.rules.dueSoonDays): boolean {
   if (isDone(t) || !t.end) return false
   const end = startOfDay(t.end)
   return end >= startOfDay(today) && end <= addDays(today, days)
@@ -67,8 +63,8 @@ export function isUnassigned(t: GanttTask): boolean {
   return !isMilestone(t) && !(t.assignees?.length)
 }
 
-export function hasQualityWarning(t: HealthTask): boolean {
-  return (t.warningIds?.length ?? 0) > 0
+export function hasQualityWarning(t: HealthTask, s: Settings = DEFAULT_SETTINGS): boolean {
+  return applyWarningSettings(t.warningIds ?? [], t, s).length > 0
 }
 
 // Ids of the tasks that have at least one subtask in the list. Such a task
@@ -131,7 +127,10 @@ export function projectSpan(tasks: GanttTask[]): { start?: Date; end?: Date } {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
+export function projectHealth(
+  allTasks: HealthTask[], today: Date, s: Settings = DEFAULT_SETTINGS,
+): ProjectHealth {
+  const tasks = withoutBacklog(allTasks, s, 'health')
   const h: ProjectHealth = {
     total: tasks.length, done: 0, open: 0, donePct: 0,
     overdue: 0, overdueMilestones: 0, lateStart: 0, dueSoon: 0,
@@ -149,10 +148,10 @@ export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
       if (isMilestone(t)) h.overdueMilestones++
     }
     if (isLateStart(t, today)) h.lateStart++
-    if (isDueSoon(t, today)) h.dueSoon++
+    if (isDueSoon(t, today, s.rules.dueSoonDays)) h.dueSoon++
     if (!parents.has(t.id) && isUnscheduled(t)) h.unscheduled++
     if (!parents.has(t.id) && isUnassigned(t)) h.unassigned++
-    if (hasQualityWarning(t)) h.quality++
+    if (hasQualityWarning(t, s)) h.quality++
     if (isMilestone(t) && t.end && startOfDay(t.end) >= t0 &&
         (!h.nextMilestone || t.end < h.nextMilestone.end!)) {
       h.nextMilestone = t
@@ -166,7 +165,7 @@ export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
   const red: string[] = []
   if (h.overdueMilestones) red.push(`${plural(h.overdueMilestones, 'milestone')} overdue`)
   if (h.end && startOfDay(h.end) < t0) red.push(`End date passed with ${plural(h.open, 'open task')}`)
-  if (h.overdue / h.open >= RED_OVERDUE_SHARE) {
+  if (h.overdue / h.open >= s.rules.redOverdueShare) {
     red.push(`${Math.round((h.overdue / h.open) * 100)}% of open tasks overdue`)
   }
   if (red.length) { h.rag = 'red'; h.ragReasons = red; return h }
@@ -174,7 +173,7 @@ export function projectHealth(tasks: HealthTask[], today: Date): ProjectHealth {
   const amber: string[] = []
   if (h.overdue) amber.push(`${plural(h.overdue, 'task')} overdue`)
   if (h.lateStart) amber.push(`${plural(h.lateStart, 'task')} not started on time`)
-  if (h.unscheduled / h.open >= AMBER_UNSCHEDULED_SHARE) {
+  if (h.unscheduled / h.open >= s.rules.amberUnscheduledShare) {
     amber.push(`${Math.round((h.unscheduled / h.open) * 100)}% of open tasks unscheduled`)
   }
   if (amber.length) { h.rag = 'amber'; h.ragReasons = amber; return h }
@@ -189,13 +188,16 @@ export type RiskKind = 'overdue' | 'late-start' | 'due-soon' | 'undated' | 'unas
 
 export const RISK_KINDS: RiskKind[] = ['overdue', 'late-start', 'due-soon', 'undated', 'unassigned', 'quality']
 
-export const RISK_LABEL: Record<RiskKind, string> = {
+const RISK_LABEL: Record<Exclude<RiskKind, 'due-soon'>, string> = {
   'overdue': 'Overdue',
   'late-start': 'Starting late',
-  'due-soon': `Due in ${DUE_SOON_DAYS}d`,
   'undated': 'Undated',
   'unassigned': 'Unassigned',
-  'quality': 'Missing desc / DoD',
+  'quality': 'Missing info',
+}
+
+export function riskLabel(k: RiskKind, s: Settings = DEFAULT_SETTINGS): string {
+  return k === 'due-soon' ? `Due in ${s.rules.dueSoonDays}d` : RISK_LABEL[k]
 }
 
 export interface RiskItem<T extends HealthTask = HealthTask> {
@@ -205,15 +207,17 @@ export interface RiskItem<T extends HealthTask = HealthTask> {
   daysLate: number
 }
 
-export function taskRisks(t: HealthTask, today: Date, hasSubtasks = false): RiskKind[] {
+export function taskRisks(
+  t: HealthTask, today: Date, hasSubtasks = false, s: Settings = DEFAULT_SETTINGS,
+): RiskKind[] {
   if (isDone(t)) return []
   const out: RiskKind[] = []
   if (isOverdue(t, today)) out.push('overdue')
   if (isLateStart(t, today)) out.push('late-start')
-  if (isDueSoon(t, today)) out.push('due-soon')
+  if (isDueSoon(t, today, s.rules.dueSoonDays)) out.push('due-soon')
   if (!hasSubtasks && isUnscheduled(t)) out.push('undated')
   if (!hasSubtasks && isUnassigned(t)) out.push('unassigned')
-  if (hasQualityWarning(t)) out.push('quality')
+  if (hasQualityWarning(t, s)) out.push('quality')
   return out
 }
 
@@ -222,12 +226,14 @@ export function taskRisks(t: HealthTask, today: Date, hasSubtasks = false): Risk
 export function riskItems<T extends HealthTask>(
   projects: Array<{ id: string; tasks: T[] }>,
   today: Date,
+  s: Settings = DEFAULT_SETTINGS,
 ): RiskItem<T>[] {
   const out: RiskItem<T>[] = []
   for (const p of projects) {
-    const parents = parentIdsOf(p.tasks)
-    for (const t of p.tasks) {
-      const kinds = taskRisks(t, today, parents.has(t.id))
+    const tasks = withoutBacklog(p.tasks, s, 'health')
+    const parents = parentIdsOf(tasks)
+    for (const t of tasks) {
+      const kinds = taskRisks(t, today, parents.has(t.id), s)
       if (kinds.length) out.push({ projectId: p.id, task: t, kinds, daysLate: daysLate(t, today) })
     }
   }

@@ -69,15 +69,17 @@ export const RANGE_LABEL: Record<RangePreset, string> = {
   fit: 'All dates',
 }
 
-export function presetRange(preset: RangePreset, today: Date, tasks: GanttTask[]): { from: Date; to: Date } {
+export function presetRange(
+  preset: RangePreset, today: Date, tasks: GanttTask[], weekStart?: number,
+): { from: Date; to: Date } {
   const m = (n: number) => new Date(today.getFullYear(), today.getMonth() + n, today.getDate())
   switch (preset) {
-    case 'next3': return { from: startOfWeek(today), to: m(3) }
+    case 'next3': return { from: startOfWeek(today, weekStart), to: m(3) }
     case 'around': return { from: startOfMonth(m(-1)), to: m(5) }
     case 'year': return { from: startOfMonth(m(-1)), to: m(11) }
     case 'fit': {
-      const w = fitWindow(tasks, 'week')
-      return { from: w.from < today ? w.from : startOfWeek(today), to: w.to > today ? w.to : addDays(today, 28) }
+      const w = fitWindow(tasks, 'week', weekStart)
+      return { from: w.from < today ? w.from : startOfWeek(today, weekStart), to: w.to > today ? w.to : addDays(today, 28) }
     }
   }
 }

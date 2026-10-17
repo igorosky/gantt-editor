@@ -47,6 +47,13 @@ describe('portfolio tasks and cache', () => {
     expect(toPortfolioTask(remote({ description: 'DoD: shipped' }), 'L1').warningIds).toEqual([])
   })
 
+  it('checks the DoD with the configured keywords', () => {
+    const kw = ['Kryteria ukończenia']
+    expect(toPortfolioTask(remote({ description: 'Kryteria ukończenia: działa' }), 'L1', kw).warningIds).toEqual([])
+    expect(toPortfolioTask(remote({ description: 'DoD: shipped' }), 'L1', kw).warningIds).toEqual(['missing-dod'])
+    expect(toPortfolioTask(remote({}), 'L1', kw).warningIds).toEqual(['empty-description'])
+  })
+
   it('round-trips through JSON with real dates', () => {
     const t = toPortfolioTask(remote({ due_date: MS(2026, 10, 5), time_estimate: 3600000 }), 'L1')
     const back = deserializeCache(serializeCache({ L1: { fetchedAt: 'now', tasks: [t] } }))

@@ -3,6 +3,7 @@ import type { GanttTask } from '../types'
 import type { GanttGeometry } from './GanttPanel'
 import { DAY_MS, addDays, fmtShort } from '../lib/dates'
 import { computeWorkload, type WorkloadMetric } from '../lib/workload'
+import { withoutBacklog, type Settings } from '../lib/settings'
 import {
   Seg, Tooltip, assigneeKey, assigneeKeys, fmtValue, initials, useTooltip, UNASSIGNED_KEY,
 } from './portfolio/shared'
@@ -14,6 +15,7 @@ interface Props {
   metric: WorkloadMetric
   onMetric: (m: WorkloadMetric) => void
   onClose: () => void
+  settings: Settings
 }
 
 export const STRIP_H = 96
@@ -25,12 +27,13 @@ const BAR_COLOR = '#2a78d6'
 // Workload of the current board drawn under the gantt, one bar per gantt
 // column. It sits below the whole split body so both panels lose the same
 // height and the pixel-based LHS / RHS scroll sync stays aligned.
-export function WorkloadStrip({ tasks, geometry, container, metric, onMetric, onClose }: Props) {
+export function WorkloadStrip({ tasks: allTasks, geometry, container, metric, onMetric, onClose, settings }: Props) {
   const stripRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<SVGSVGElement>(null)
   const [box, setBox] = useState<{ left: number; width: number } | null>(null)
   const { tip, show, hide } = useTooltip()
   const [today] = useState(() => new Date())
+  const tasks = useMemo(() => withoutBacklog(allTasks, settings, 'workload'), [allTasks, settings])
 
   // Line the plot up with the gantt container, wherever the divider sits
   useLayoutEffect(() => {
@@ -64,8 +67,10 @@ export function WorkloadStrip({ tasks, geometry, container, metric, onMetric, on
     const { dates } = geometry
     const stepDays = Math.round((dates[1].getTime() - dates[0].getTime()) / DAY_MS)
     const bounds = [...dates, addDays(dates[dates.length - 1], stepDays)]
-    return computeWorkload(tasks, bounds, { metric, keysOf: assigneeKeys })
-  }, [tasks, geometry, metric])
+    return computeWorkload(tasks, bounds, {
+      metric, keysOf: assigneeKeys, workdays: settings.calendar.workdays,
+    })
+  }, [tasks, geometry, metric, settings.calendar.workdays])
 
   const names = useMemo(() => {
     const m = new Map<string, string>([[UNASSIGNED_KEY, 'Unassigned']])

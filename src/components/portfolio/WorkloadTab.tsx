@@ -8,10 +8,12 @@ import {
   RANGE_LABEL, Seg, UNASSIGNED_KEY, UNIT_LABEL, assigneeKeys, assigneeNames, fmtValue, metricLabel,
   presetRange, type RangePreset,
 } from './shared'
+import { withoutBacklog, workdayLabel, type Settings } from '../../lib/settings'
 
 interface Props {
   projects: PortfolioProject[]
   today: Date
+  settings: Settings
 }
 
 const OTHER_KEY = 'other'
@@ -33,7 +35,7 @@ export const containsDay = (b: WorkloadBucket, d: Date) => b.start <= d && d < b
 
 type Drill = { kind: 'bucket'; index: number } | { kind: 'noEstimate' } | { kind: 'undated' } | null
 
-export function WorkloadTab({ projects, today }: Props) {
+export function WorkloadTab({ projects, today, settings }: Props) {
   const [metric, setMetric] = useState<WorkloadMetric>('count')
   const [unit, setUnit] = useState<TimeUnit>('week')
   const [scope, setScope] = useState<string>('all')
@@ -43,15 +45,16 @@ export function WorkloadTab({ projects, today }: Props) {
 
   const scopeProject = scope === 'all' ? null : projects.find(p => p.ref.listId === scope) ?? null
   const tasks = useMemo(
-    () => (scopeProject ? scopeProject.tasks : projects.flatMap(p => p.tasks)),
-    [projects, scopeProject],
+    () => withoutBacklog(scopeProject ? scopeProject.tasks : projects.flatMap(p => p.tasks), settings, 'workload'),
+    [projects, scopeProject, settings],
   )
   const taskById = useMemo(() => new Map<string, PortfolioTask>(tasks.map(t => [`${t.projectId}:${t.id}`, t])), [tasks])
   const projectById = useMemo(() => new Map(projects.map(p => [p.ref.listId, p])), [projects])
   const names = useMemo(() => assigneeNames(projects), [projects])
 
-  const { from, to } = useMemo(() => presetRange(range, today, tasks), [range, today, tasks])
-  const boundaries = useMemo(() => unitBoundaries(from, to, unit), [from, to, unit])
+  const { weekStart, workdays } = settings.calendar
+  const { from, to } = useMemo(() => presetRange(range, today, tasks, weekStart), [range, today, tasks, weekStart])
+  const boundaries = useMemo(() => unitBoundaries(from, to, unit, weekStart), [from, to, unit, weekStart])
 
   // Projects past the eighth color slot share the neutral "Other" series
   const folded = useMemo(
@@ -71,11 +74,12 @@ export function WorkloadTab({ projects, today }: Props) {
     {
       metric,
       includeDone,
+      workdays,
       keysOf: scopeProject
         ? assigneeKeys
         : t => [folded.has((t as PortfolioTask).projectId) ? OTHER_KEY : (t as PortfolioTask).projectId],
     },
-  ), [tasks, boundaries, metric, includeDone, scopeProject, folded])
+  ), [tasks, boundaries, metric, includeDone, workdays, scopeProject, folded])
 
   // Series: projects in their own colors, or assignees (heaviest first, folded
   // past the palette, then colored in name order so a color tracks the person)
@@ -202,7 +206,7 @@ export function WorkloadTab({ projects, today }: Props) {
           <span className="pf-muted">
             {metric === 'count'
               ? 'A task counts once in every period it overlaps. Milestones excluded.'
-              : 'Each estimate is spread evenly over the working days (Mon-Fri) of the task and split between assignees.'}
+              : `Each estimate is spread evenly over the working days (${workdayLabel(workdays)}) of the task and split between assignees.`}
           </span>
         </div>
       </section>
