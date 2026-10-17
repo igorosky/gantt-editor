@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { SyncLogEntry, SyncReport } from '../types'
+import type { ResolutionUse, SyncLogEntry, SyncReport } from '../types'
 import { countsText, groupEntries, KIND_LABEL, runFailed } from '../lib/syncLog'
 
 interface EntryListProps {
@@ -11,6 +11,13 @@ interface EntryListProps {
 
 const Value = ({ v }: { v: string }) =>
   v ? <span className="sync-val">{v}</span> : <span className="sync-val sync-val--empty">none</span>
+
+const HOW_LABEL: Record<ResolutionUse, string> = {
+  board: 'board',
+  clickup: 'ClickUp',
+  merge: 'merged',
+  edit: 'edited',
+}
 
 export function SyncEntryList({ entries, onOpenTask, taskIds }: EntryListProps) {
   return (
@@ -44,6 +51,33 @@ export function SyncEntryList({ entries, onOpenTask, taskIds }: EntryListProps) 
                             <td><Value v={c.from} /></td>
                             <td className="sync-changes__arrow">→</td>
                             <td><Value v={c.to} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {e.resolved && e.resolved.length > 0 && (
+                    <table className="sync-changes sync-changes--resolved">
+                      <thead>
+                        <tr>
+                          <th />
+                          <th>Board</th>
+                          <th>ClickUp</th>
+                          <th />
+                          <th>Result</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {e.resolved.map((c, j) => (
+                          <tr key={j}>
+                            <th>{c.field}</th>
+                            <td><Value v={c.board} /></td>
+                            <td><Value v={c.clickup} /></td>
+                            <td className="sync-changes__arrow">→</td>
+                            <td>
+                              <Value v={c.result} />
+                              <span className={`sync-how sync-how--${c.how}`}>{HOW_LABEL[c.how]}</span>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

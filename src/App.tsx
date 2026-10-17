@@ -9,7 +9,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
 import { SyncLogDialog } from './components/SyncLogDialog'
-import { SyncConfirmDialog } from './components/SyncConfirmDialog'
+import { SyncConflictDialog } from './components/SyncConflictDialog'
 import { WorkloadStrip } from './components/WorkloadStrip'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
@@ -20,7 +20,8 @@ import { useSettings } from './hooks/useSettings'
 import { withoutBacklog } from './lib/settings'
 import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
-import { latestUpdate, pullFromClickUp, pullRisks, pushRisks, pushToClickUp } from './lib/sync'
+import { latestUpdate, pullFromClickUp, pushToClickUp } from './lib/sync'
+import { findConflicts, resolveConflicts, type Resolution, type SyncConflict } from './lib/conflicts'
 import { getAllTasks, type RemoteTask } from './lib/clickup'
 import { runFailed, runSummary } from './lib/syncLog'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
@@ -86,11 +87,11 @@ export default function App() {
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
   const [newTaskDraft, setNewTaskDraft] = useState<GanttTask | null>(null)
   const [syncBusy, setSyncBusy] = useState<SyncDirection | null>(null)
-  // Fetched ClickUp list held while the user decides on a risky pull / push
-  const [syncConfirm, setSyncConfirm] = useState<{
+  // Fetched ClickUp list held while the user resolves the conflicts
+  const [syncConflicts, setSyncConflicts] = useState<{
     direction: SyncDirection
     remote: RemoteTask[]
-    risks: SyncLogEntry[]
+    conflicts: SyncConflict[]
     startedAt: string
     fetchMs: number
   } | null>(null)
@@ -184,26 +185,31 @@ export default function App() {
     } catch { /* quota */ }
   }, [loadStripOn, loadMetric])
 
-  // Applies a pull or push to the fetched list, then logs it. lastSyncAt is the
-  // baseline the next risk check compares ClickUp's date_updated against; it
-  // never goes below ClickUp's own clock, so a client clock behind ClickUp's
-  // does not make the tasks just written look changed in ClickUp.
+  // Applies a pull or push to the fetched list, then logs it. Resolved
+  // conflicts (`resolution`) override what the operation would do. lastSyncAt
+  // is the fallback baseline for tasks without a syncBase; it never goes below
+  // ClickUp's own clock, so a client clock behind ClickUp's does not make the
+  // tasks just written look changed in ClickUp.
   const applySync = useCallback(async (
     direction: SyncDirection, remote: RemoteTask[], startedAt: string, fetchMs: number,
+    resolution?: { conflicts: SyncConflict[]; picks: Map<string, Resolution> },
   ) => {
     if (!config?.token || !config.listId) return
     setSyncBusy(direction)
     const t0 = performance.now()
     try {
+      const resolved = resolution
+        ? resolveConflicts(direction, resolution.conflicts, resolution.picks, tasksRef.current, remote)
+        : undefined
       let entries: SyncLogEntry[]
       let clock: number
       if (direction === 'pull') {
-        const res = pullFromClickUp(tasksRef.current, remote)
+        const res = pullFromClickUp(tasksRef.current, remote, resolved?.overrides)
         setTasks(res.tasks)
         entries = res.entries
         clock = latestUpdate(remote)
       } else {
-        const res = await pushToClickUp(config, tasksRef.current, remote)
+        const res = await pushToClickUp(config, tasksRef.current, remote, resolved?.overrides)
         // Patch by id, so edits made while the push ran survive
         setTasks(prev => prev.map(t => {
           const p = res.patches.get(t.id)
@@ -212,6 +218,7 @@ export default function App() {
         entries = res.entries
         clock = res.latestUpdate
       }
+      if (resolved) entries = [...resolved.log, ...entries]
       setConfig({ ...config, lastSyncAt: new Date(Math.max(Date.now(), clock)).toISOString() })
       syncLog.addRun({ direction, at: startedAt, durationMs: fetchMs + performance.now() - t0, entries })
     } catch (e) {
@@ -225,7 +232,7 @@ export default function App() {
   }, [config, setTasks, setConfig, syncLog.addRun])
 
   // Fetches the list, then applies straight away unless the operation would
-  // overwrite changes made on the other side, which needs a confirmation
+  // overwrite changes made on the other side, which the user resolves first
   const startSync = useCallback(async (direction: SyncDirection) => {
     if (!config?.token || !config.listId || syncBusy) return
     setSyncBusy(direction)
@@ -244,10 +251,10 @@ export default function App() {
     }
     const fetchMs = performance.now() - t0
     const lastSyncMs = config.lastSyncAt ? Date.parse(config.lastSyncAt) : 0
-    const risks = (direction === 'pull' ? pullRisks : pushRisks)(tasksRef.current, remote, lastSyncMs)
-    if (risks.length) {
+    const conflicts = findConflicts(direction, tasksRef.current, remote, lastSyncMs)
+    if (conflicts.length) {
       setSyncBusy(null)
-      setSyncConfirm({ direction, remote, risks, startedAt, fetchMs })
+      setSyncConflicts({ direction, remote, conflicts, startedAt, fetchMs })
       return
     }
     await applySync(direction, remote, startedAt, fetchMs)
@@ -551,15 +558,15 @@ export default function App() {
           onClose={() => setAppSettingsOpen(false)}
         />
       )}
-      {syncConfirm && (
-        <SyncConfirmDialog
-          direction={syncConfirm.direction}
-          risks={syncConfirm.risks}
-          onCancel={() => setSyncConfirm(null)}
-          onConfirm={() => {
-            const c = syncConfirm
-            setSyncConfirm(null)
-            void applySync(c.direction, c.remote, c.startedAt, c.fetchMs)
+      {syncConflicts && (
+        <SyncConflictDialog
+          direction={syncConflicts.direction}
+          conflicts={syncConflicts.conflicts}
+          onCancel={() => setSyncConflicts(null)}
+          onApply={picks => {
+            const c = syncConflicts
+            setSyncConflicts(null)
+            void applySync(c.direction, c.remote, c.startedAt, c.fetchMs, { conflicts: c.conflicts, picks })
           }}
         />
       )}

@@ -2,12 +2,13 @@ import type { SyncLogEntry, SyncLogKind, SyncReport } from '../types'
 
 // Display order of the groups in the log; problems first
 export const KIND_ORDER: SyncLogKind[] = [
-  'error', 'skipped', 'updated', 'added', 'created', 'moved', 'removed', 'dep-added', 'dep-removed', 'info',
+  'error', 'skipped', 'resolved', 'updated', 'added', 'created', 'moved', 'removed', 'dep-added', 'dep-removed', 'info',
 ]
 
 export const KIND_LABEL: Record<SyncLogKind, string> = {
   error: 'Errors',
   skipped: 'Skipped',
+  resolved: 'Conflicts resolved',
   updated: 'Updated',
   added: 'Added to board',
   created: 'Created in ClickUp',
@@ -28,6 +29,7 @@ const COUNT_WORD: Partial<Record<SyncLogKind, [string, string]>> = {
   'dep-added': ['dep added', 'deps added'],
   'dep-removed': ['dep removed', 'deps removed'],
   skipped: ['skipped', 'skipped'],
+  resolved: ['resolved', 'resolved'],
   error: ['error', 'errors'],
 }
 

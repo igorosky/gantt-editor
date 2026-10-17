@@ -1,4 +1,4 @@
-import type { ClickUpConfig, GanttTask, SyncFieldChange, SyncLogEntry } from '../types'
+import type { ClickUpConfig, GanttTask, SyncBase, SyncFieldChange, SyncLogEntry } from '../types'
 import { buildTree, ancestors, TOP_LEVEL_BLOCKED } from './tree'
 import { fmtDate } from './dates'
 import { clipText } from './syncLog'
@@ -21,8 +21,10 @@ import {
 //         dependencies; nothing is written to ClickUp.
 //   push: the board wins. ClickUp takes the board's fields, hierarchy and
 //         dependencies; the board only learns new ClickUp ids.
-// The caller fetches the list first, so pullRisks / pushRisks can ask for a
-// confirmation before anything is overwritten.
+// The caller fetches the list first, so findConflicts (conflicts.ts) can let
+// the user decide each change from the other side before anything is
+// overwritten. Those decisions come back as Overrides. Both operations record
+// syncBase, the state both sides agree on, for the next three-way check.
 
 const isRemoteMilestone = (r: RemoteTask): boolean => r.custom_item_id === MILESTONE_ITEM_ID
 
@@ -68,11 +70,11 @@ export function latestUpdate(remote: RemoteTask[]): number {
 
 // ---------------------------------------------------------------- field diff
 
-type FieldKey =
+export type FieldKey =
   | 'name' | 'type' | 'start' | 'end' | 'status' | 'priority'
   | 'assignees' | 'tags' | 'description' | 'estimate'
 
-interface FieldDiff {
+export interface FieldDiff {
   key: FieldKey
   label: string
   local: string
@@ -84,15 +86,16 @@ const PRIORITY_LABEL = { 1: 'Urgent', 2: 'High', 3: 'Normal', 4: 'Low' } as cons
 const fmtHours = (ms?: number): string =>
   ms ? `${Math.round((ms / 3_600_000) * 10) / 10}h` : ''
 
-const assigneeIds = (t: GanttTask): number[] =>
+export const assigneeIds = (t: GanttTask): number[] =>
   (t.assignees ?? []).map(a => a.id).filter(id => id !== -1)
 
-const tagNames = (t: GanttTask): string[] => (t.tags ?? []).map(x => x.name)
+export const tagNames = (t: GanttTask): string[] => (t.tags ?? []).map(x => x.name)
 
 // `cmp` decides equality, `show` is what the log prints. Dates compare by day,
 // so a time-of-day difference (frappe's 23:59:59 ends, ClickUp's 4 am due
-// dates) never makes a task look changed.
-const FIELDS: Array<{ key: FieldKey; label: string; cmp: (t: GanttTask) => string; show?: (t: GanttTask) => string }> = [
+// dates) never makes a task look changed. Set fields compare as sorted keys
+// (ids / names), joined so the base fingerprint can be split back.
+export const FIELDS: Array<{ key: FieldKey; label: string; cmp: (t: GanttTask) => string; show?: (t: GanttTask) => string }> = [
   { key: 'name', label: 'Name', cmp: t => t.name },
   { key: 'type', label: 'Type', cmp: t => (t.type === 'milestone' ? 'Milestone' : 'Task') },
   { key: 'start', label: 'Start', cmp: t => (t.start ? fmtDate(t.start) : '') },
@@ -104,10 +107,118 @@ const FIELDS: Array<{ key: FieldKey; label: string; cmp: (t: GanttTask) => strin
     cmp: t => [...assigneeIds(t)].sort((a, b) => a - b).join(','),
     show: t => (t.assignees ?? []).map(a => a.username).sort().join(', '),
   },
-  { key: 'tags', label: 'Tags', cmp: t => [...tagNames(t)].sort().join(', ') },
+  {
+    key: 'tags', label: 'Tags',
+    cmp: t => [...tagNames(t)].sort().join('\n'),
+    show: t => [...tagNames(t)].sort().join(', '),
+  },
   { key: 'description', label: 'Description', cmp: t => t.description ?? '', show: t => clipText(t.description ?? '') },
   { key: 'estimate', label: 'Estimate', cmp: t => fmtHours(t.timeEstimate) },
 ]
+
+const FIELD_BY_KEY = new Map(FIELDS.map(f => [f.key, f]))
+
+export const showField = (key: FieldKey, t: GanttTask): string => {
+  const f = FIELD_BY_KEY.get(key)!
+  return (f.show ?? f.cmp)(t)
+}
+
+// The task properties behind each field, for copying a field from one side
+export const FIELD_PROPS: Record<FieldKey, Array<keyof GanttTask>> = {
+  name: ['name'],
+  type: ['type'],
+  start: ['start'],
+  end: ['end'],
+  status: ['status', 'statusColor', 'statusType'],
+  priority: ['priority'],
+  assignees: ['assignees'],
+  tags: ['tags'],
+  description: ['description'],
+  estimate: ['timeEstimate'],
+}
+
+export function copyFields(from: GanttTask, keys: Iterable<FieldKey>): Partial<GanttTask> {
+  const out: Record<string, unknown> = {}
+  for (const k of keys) for (const p of FIELD_PROPS[k]) out[p] = from[p]
+  return out as Partial<GanttTask>
+}
+
+// ------------------------------------------------------------ sync baseline
+
+// FNV-1a: the base keeps a short fingerprint of the description instead of a
+// second copy of it
+export function hashText(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return `${s.length}:${(h >>> 0).toString(16)}`
+}
+
+export const fieldPrint = (key: FieldKey, t: GanttTask): string => {
+  const v = FIELD_BY_KEY.get(key)!.cmp(t)
+  return key === 'description' ? hashText(v) : v
+}
+
+export const depsPrint = (cuids: Iterable<string>): string => [...new Set(cuids)].sort().join(',')
+
+// What both sides agree on after a pull / push: every synced field (the
+// estimate is pull-only) plus the predecessors' ClickUp ids
+export function syncBaseOf(t: GanttTask, depCuids?: Iterable<string>): SyncBase {
+  const out: SyncBase = {}
+  for (const f of FIELDS) {
+    if (f.key !== 'estimate') out[f.key] = fieldPrint(f.key, t)
+  }
+  if (depCuids) out.deps = depsPrint(depCuids)
+  return out
+}
+
+// A status, priority or description the board never had is not a board edit:
+// push does not send it, pull may fill it in
+export const boardLacks = (key: FieldKey, l: GanttTask): boolean =>
+  (key === 'status' && l.status === undefined) ||
+  (key === 'priority' && l.priority === undefined) ||
+  (key === 'description' && l.description === undefined)
+
+// A milestone keeps one date, the due date, in start and end
+export function normalizeMilestone(t: GanttTask): GanttTask {
+  if (t.type !== 'milestone') return t
+  const d = t.end ?? t.start
+  return { ...t, start: d, end: d }
+}
+
+// ------------------------------------------------------------ overrides
+
+// Conflict decisions for one task, applied on top of what a pull or push does
+// otherwise. parentId: null = top level. deps: predecessor local id -> keep.
+export interface TaskOverride {
+  fields?: Partial<GanttTask>
+  parentId?: string | null
+  deps?: Record<string, boolean>
+}
+
+export type Overrides = Map<string, TaskOverride>
+
+function overrideDeps(deps: Iterable<string>, o: Record<string, boolean>): string[] {
+  const out = new Set(deps)
+  for (const [id, keep] of Object.entries(o)) {
+    if (keep) out.add(id)
+    else out.delete(id)
+  }
+  return [...out]
+}
+
+export function applyOverride(t: GanttTask, o?: TaskOverride): GanttTask {
+  if (!o) return t
+  const out = o.fields ? normalizeMilestone({ ...t, ...o.fields }) : { ...t }
+  if (o.parentId !== undefined) out.parentId = o.parentId ?? undefined
+  if (o.deps) {
+    const deps = overrideDeps(out.dependencies ?? [], o.deps)
+    out.dependencies = deps.length ? deps : undefined
+  }
+  return out
+}
 
 function diffFields(local: GanttTask, remote: GanttTask): FieldDiff[] {
   const out: FieldDiff[] = []
@@ -121,7 +232,7 @@ function diffFields(local: GanttTask, remote: GanttTask): FieldDiff[] {
 
 // What a pull turns a linked row into. ClickUp may leave the description out,
 // which keeps the local one.
-function pullTarget(l: GanttTask, r: RemoteTask): GanttTask {
+export function pullTarget(l: GanttTask, r: RemoteTask): GanttTask {
   const m = mapRemoteTask(r, l.id)
   return {
     ...l,
@@ -140,26 +251,22 @@ function pullTarget(l: GanttTask, r: RemoteTask): GanttTask {
   }
 }
 
-const pullDiff = (l: GanttTask, r: RemoteTask): FieldDiff[] => diffFields(l, pullTarget(l, r))
+export const pullDiff = (l: GanttTask, r: RemoteTask): FieldDiff[] => diffFields(l, pullTarget(l, r))
 
 // Fields a push would send. The estimate is pull-only, and a status, priority
 // or description the board never had is not a change to push.
-function pushDiff(l: GanttTask, r: RemoteTask): FieldDiff[] {
-  return diffFields(l, mapRemoteTask(r, l.id)).filter(d =>
-    d.key !== 'estimate' &&
-    !(d.key === 'status' && l.status === undefined) &&
-    !(d.key === 'priority' && l.priority === undefined) &&
-    !(d.key === 'description' && l.description === undefined))
+export function pushDiff(l: GanttTask, r: RemoteTask): FieldDiff[] {
+  return diffFields(l, mapRemoteTask(r, l.id)).filter(d => d.key !== 'estimate' && !boardLacks(d.key, l))
 }
 
 // `from` is the old value at the destination, `to` the new one
 const pulled = (d: FieldDiff[]): SyncFieldChange[] => d.map(x => ({ field: x.label, from: x.local, to: x.remote }))
 const pushed = (d: FieldDiff[]): SyncFieldChange[] => d.map(x => ({ field: x.label, from: x.remote, to: x.local }))
 
-const remotePreds = (r: RemoteTask): string[] =>
+export const remotePreds = (r: RemoteTask): string[] =>
   (r.dependencies ?? []).filter(d => d.task_id === r.id).map(d => d.depends_on)
 
-const remoteChangedSince = (r: RemoteTask, lastSyncMs: number): boolean =>
+export const remoteChangedSince = (r: RemoteTask, lastSyncMs: number): boolean =>
   lastSyncMs === 0 || Number(r.date_updated || 0) > lastSyncMs
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -203,7 +310,7 @@ function topoSort(tasks: GanttTask[]): GanttTask[] {
 }
 
 // Local id <-> ClickUp id over the linked rows whose ClickUp task still exists
-function linkMaps(tasks: GanttTask[], remoteById: Map<string, RemoteTask>) {
+export function linkMaps(tasks: GanttTask[], remoteById: Map<string, RemoteTask>) {
   const cuidOf = new Map<string, string>()
   const localOf = new Map<string, string>()
   for (const t of tasks) {
@@ -226,8 +333,11 @@ export interface PullResult {
 
 // Pure: the board after copying ClickUp onto it. Linked rows take ClickUp's
 // fields, parent and dependencies; rows deleted in ClickUp go; ClickUp-only
-// tasks are added; board-only rows are left alone.
-export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): PullResult {
+// tasks are added; board-only rows are left alone. `overrides` (resolved
+// conflicts) replace what ClickUp would set. The base always records
+// ClickUp's state, so a value kept or merged on the board is a board edit
+// that the next push sends.
+export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[], overrides?: Overrides): PullResult {
   const entries: SyncLogEntry[] = []
   const remoteById = new Map(remote.map(r => [r.id, r]))
   const next: GanttTask[] = []
@@ -244,9 +354,13 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): 
       entries.push({ kind: 'removed', task: l.name, clickupId: l.clickupId, detail: 'Deleted in ClickUp or moved to another list' })
       continue
     }
-    const diff = pullDiff(l, r)
-    next.push(pullTarget(l, r))
-    if (diff.length) entries.push({ kind: 'updated', task: r.name, taskId: l.id, clickupId: r.id, changes: pulled(diff) })
+    const target = pullTarget(l, r)
+    const fields = overrides?.get(l.id)?.fields
+    const t = fields ? normalizeMilestone({ ...target, ...fields }) : target
+    t.syncBase = syncBaseOf(target, remotePreds(r))
+    const diff = diffFields(l, t)
+    next.push(t)
+    if (diff.length) entries.push({ kind: 'updated', task: t.name, taskId: l.id, clickupId: r.id, changes: pulled(diff) })
   }
 
   const linked = new Set(next.map(t => t.clickupId).filter((x): x is string => !!x))
@@ -254,6 +368,7 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): 
   for (const r of remote) {
     if (linked.has(r.id)) continue
     const t = mapRemoteTask(r, crypto.randomUUID())
+    t.syncBase = syncBaseOf(t, remotePreds(r))
     next.push(t)
     added.add(t.id)
     entries.push({ kind: 'added', task: t.name, taskId: t.id, clickupId: r.id })
@@ -268,7 +383,8 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): 
     const r = t.clickupId ? remoteById.get(t.clickupId) : undefined
     if (!r) continue
     const remoteP = r.parent ?? null
-    const parentId = remoteP ? localOf.get(remoteP) : undefined
+    const kept = overrides?.get(t.id)?.parentId
+    const parentId = kept !== undefined ? kept ?? undefined : remoteP ? localOf.get(remoteP) : undefined
     if (parentId !== t.parentId && !added.has(t.id)) {
       entries.push({
         kind: 'moved', task: t.name, taskId: t.id, clickupId: r.id,
@@ -294,7 +410,9 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): 
   for (const t of next) {
     const r = t.clickupId ? remoteById.get(t.clickupId) : undefined
     if (!r) continue
-    const want = new Set(remotePreds(r).map(c => localOf.get(c)).filter((x): x is string => !!x))
+    const fromClickUp = remotePreds(r).map(c => localOf.get(c)).filter((x): x is string => !!x)
+    const od = overrides?.get(t.id)?.deps
+    const want = new Set((od ? overrideDeps(fromClickUp, od) : fromClickUp).filter(id => nextIds.has(id)))
     const before = t.dependencies ?? []
     const kept = before.filter(id => want.has(id) || (!cuidOf.has(id) && nextIds.has(id)))
     for (const id of before) {
@@ -323,57 +441,11 @@ export function pullFromClickUp(localTasks: GanttTask[], remote: RemoteTask[]): 
   return { tasks, entries }
 }
 
-// Board changes a pull would throw away: a linked row that differs from
-// ClickUp although ClickUp has not changed it since the last pull / push, an
-// unpushed re-parent, an unpushed dependency. Without a last sync there is no
-// way to tell who changed what, so nothing is reported.
-export function pullRisks(localTasks: GanttTask[], remote: RemoteTask[], lastSyncMs: number): SyncLogEntry[] {
-  if (lastSyncMs === 0) return []
-  const out: SyncLogEntry[] = []
-  const remoteById = new Map(remote.map(r => [r.id, r]))
-  const { cuidOf, localOf } = linkMaps(localTasks, remoteById)
-  const tree = buildTree(localTasks)
-  const nameOf = new Map(localTasks.map(t => [t.id, t.name]))
-
-  for (const l of localTasks) {
-    const r = l.clickupId ? remoteById.get(l.clickupId) : undefined
-    if (!r || remoteChangedSince(r, lastSyncMs)) continue
-    const diff = pullDiff(l, r).filter(d => d.key !== 'estimate')
-    if (diff.length) {
-      out.push({ kind: 'updated', task: l.name, taskId: l.id, clickupId: r.id, changes: pulled(diff) })
-    }
-
-    const remoteP = r.parent ?? null
-    const parent = tree.parent.get(l.id)
-    // A parent that only exists on the board is a local move too
-    const localP = parent ? cuidOf.get(parent) ?? `local:${parent}` : null
-    const outsideList = remoteP !== null && !localOf.has(remoteP)
-    if (l.remoteParent !== undefined && l.remoteParent === remoteP && localP !== remoteP && !(outsideList && localP === null)) {
-      out.push({
-        kind: 'moved', task: l.name, taskId: l.id, clickupId: r.id,
-        changes: [{
-          field: 'Parent',
-          from: parent ? nameOf.get(parent) ?? '' : 'Top level',
-          to: remoteP ? (localOf.has(remoteP) ? nameOf.get(localOf.get(remoteP)!) ?? '' : 'Top level') : 'Top level',
-        }],
-      })
-    }
-
-    const want = new Set(remotePreds(r))
-    for (const id of l.dependencies ?? []) {
-      const c = cuidOf.get(id)
-      if (c && !want.has(c)) {
-        out.push({ kind: 'dep-removed', task: l.name, taskId: l.id, clickupId: r.id, detail: `waits on "${nameOf.get(id)}" only on the board` })
-      }
-    }
-  }
-  return out
-}
-
 // ---------------------------------------------------------------------- push
 
 export interface PushResult {
-  // Per local id: new ClickUp links and parent baselines
+  // Per local id: new ClickUp links, sync baselines, and the values resolved
+  // conflicts give the board
   patches: Map<string, Partial<GanttTask>>
   entries: SyncLogEntry[]
   // Newest date_updated among ClickUp's write responses (ms), 0 when none
@@ -382,16 +454,31 @@ export interface PushResult {
 
 // Copies the board onto ClickUp: changed fields of linked rows, new tasks for
 // board-only rows (parents first), parents, and dependencies (added and
-// removed). A task deleted in ClickUp is not recreated.
+// removed). A task deleted in ClickUp is not recreated. `overrides` (resolved
+// conflicts) are applied to the board first, so ClickUp and the board both
+// end up with the decided values.
 export async function pushToClickUp(
   config: Pick<ClickUpConfig, 'token' | 'listId'>,
-  localTasks: GanttTask[],
+  boardTasks: GanttTask[],
   remote: RemoteTask[],
+  overrides?: Overrides,
 ): Promise<PushResult> {
   const { token, listId } = config
   const entries: SyncLogEntry[] = []
   const patches = new Map<string, Partial<GanttTask>>()
   const patch = (id: string, p: Partial<GanttTask>) => patches.set(id, { ...patches.get(id), ...p })
+  const localTasks = overrides?.size ? boardTasks.map(t => applyOverride(t, overrides.get(t.id))) : boardTasks
+  for (const t of localTasks) {
+    const o = overrides?.get(t.id)
+    if (!o) continue
+    const props = new Set(Object.keys(o.fields ?? {}) as Array<keyof GanttTask>)
+    if (o.fields && t.type === 'milestone') props.add('start').add('end')
+    if (o.parentId !== undefined) props.add('parentId')
+    if (o.deps) props.add('dependencies')
+    patch(t.id, Object.fromEntries([...props].map(p => [p, t[p]])) as Partial<GanttTask>)
+  }
+  // Agreed field fingerprints per local id; a failed update keeps the old ones
+  const fieldBase = new Map<string, SyncBase>()
   let latest = 0
   const seen = (r?: RemoteTask) => { latest = Math.max(latest, Number(r?.date_updated || 0)) }
   const remoteById = new Map(remote.map(r => [r.id, r]))
@@ -415,8 +502,13 @@ export async function pushToClickUp(
       continue
     }
     const diff = pushDiff(l, r)
-    if (!diff.length) continue
     const keys = new Set(diff.map(d => d.key))
+    // ClickUp after this update: the pushed fields from the board, the rest as it was
+    const agreed = syncBaseOf({ ...mapRemoteTask(r, l.id), ...copyFields(l, keys) })
+    if (!diff.length) {
+      fieldBase.set(l.id, agreed)
+      continue
+    }
     const body: Partial<UpdateTaskBody> = {}
     if (keys.has('name')) body.name = l.name
     // Only sent on a real type flip, so other custom task types in the
@@ -451,6 +543,7 @@ export async function pushToClickUp(
           ...[...remoteTags].filter(n => !localTags.has(n)).map(n => removeTagFromTask(token, r.id, n)),
         ])
       }
+      fieldBase.set(l.id, agreed)
       entries.push({ kind: 'updated', task: l.name, taskId: l.id, clickupId: r.id, changes: pushed(diff) })
     } catch (e) {
       entries.push({ kind: 'error', task: l.name, taskId: l.id, clickupId: r.id, detail: `Update failed: ${errText(e)}` })
@@ -485,13 +578,17 @@ export async function pushToClickUp(
         kind: 'created', task: u.name, taskId: u.id, clickupId: created.id,
         detail: parent ? `subtask of "${nameOf.get(parentLocal!)}"` : undefined,
       })
+      const tags: GanttTask['tags'] = []
       for (const tag of u.tags ?? []) {
         try {
           await addTagToTask(token, created.id, tag.name)
+          tags.push(tag)
         } catch (e) {
           entries.push({ kind: 'error', task: u.name, taskId: u.id, clickupId: created.id, detail: `Tag "${tag.name}" failed: ${errText(e)}` })
         }
       }
+      // The create body has no status, so ClickUp's default is the agreed one
+      fieldBase.set(u.id, syncBaseOf({ ...u, ...copyFields(mapRemoteTask(created, u.id), ['status']), tags }))
     } catch (e) {
       entries.push({ kind: 'error', task: u.name, taskId: u.id, detail: `Create failed: ${errText(e)}` })
     }
@@ -532,17 +629,19 @@ export async function pushToClickUp(
   }
 
   // Dependencies mirror the board. Remote edges to tasks that are not on the
-  // board are left alone.
+  // board are left alone. The base takes ClickUp's edges after the writes.
   for (const t of localTasks) {
     const cuid = cuidOf.get(t.id)
     if (!cuid) continue
     const have = new Set(remotePreds(remoteById.get(cuid)!))
+    const after = new Set(have)
     const want = new Set((t.dependencies ?? []).map(id => cuidOf.get(id)).filter((x): x is string => !!x))
     for (const pred of want) {
       if (have.has(pred)) continue
       const predName = nameOf.get(localOf.get(pred)!)
       try {
         await addDependency(token, cuid, pred)
+        after.add(pred)
         entries.push({ kind: 'dep-added', task: t.name, taskId: t.id, clickupId: cuid, detail: `waits on "${predName}"` })
       } catch (e) {
         entries.push({ kind: 'error', task: t.name, taskId: t.id, clickupId: cuid, detail: `Dependency on "${predName}" failed: ${errText(e)}` })
@@ -553,11 +652,13 @@ export async function pushToClickUp(
       const predName = nameOf.get(localOf.get(pred)!)
       try {
         await removeDependency(token, cuid, pred)
+        after.delete(pred)
         entries.push({ kind: 'dep-removed', task: t.name, taskId: t.id, clickupId: cuid, detail: `no longer waits on "${predName}"` })
       } catch (e) {
         entries.push({ kind: 'error', task: t.name, taskId: t.id, clickupId: cuid, detail: `Removing dependency on "${predName}" failed: ${errText(e)}` })
       }
     }
+    patch(t.id, { syncBase: { ...(fieldBase.get(t.id) ?? t.syncBase), deps: depsPrint(after) } })
   }
 
   const remoteOnly = remote.filter(r => !localOf.has(r.id)).length
@@ -566,45 +667,4 @@ export async function pushToClickUp(
   }
 
   return { patches, entries, latestUpdate: latest }
-}
-
-// ClickUp changes a push would overwrite: a linked row that differs from
-// ClickUp where ClickUp changed it since the last pull / push, a parent moved
-// in ClickUp, a dependency that only ClickUp has.
-export function pushRisks(localTasks: GanttTask[], remote: RemoteTask[], lastSyncMs: number): SyncLogEntry[] {
-  const out: SyncLogEntry[] = []
-  const remoteById = new Map(remote.map(r => [r.id, r]))
-  const { cuidOf, localOf } = linkMaps(localTasks, remoteById)
-  const tree = buildTree(localTasks)
-  const nameOf = new Map(localTasks.map(t => [t.id, t.name]))
-
-  for (const l of localTasks) {
-    const r = l.clickupId ? remoteById.get(l.clickupId) : undefined
-    if (!r || !remoteChangedSince(r, lastSyncMs)) continue
-    const diff = pushDiff(l, r)
-    if (diff.length) {
-      out.push({ kind: 'updated', task: l.name, taskId: l.id, clickupId: r.id, changes: pushed(diff) })
-    }
-
-    const remoteP = r.parent ?? null
-    const parent = tree.parent.get(l.id)
-    const localP = parent ? cuidOf.get(parent) : null
-    if (l.remoteParent !== undefined && remoteP !== l.remoteParent && typeof localP === 'string' && localP !== remoteP) {
-      out.push({
-        kind: 'moved', task: l.name, taskId: l.id, clickupId: r.id,
-        changes: [{
-          field: 'Parent',
-          from: remoteP ? remoteById.get(remoteP)?.name ?? '' : 'Top level',
-          to: nameOf.get(parent!) ?? '',
-        }],
-      })
-    }
-
-    const want = new Set((l.dependencies ?? []).map(id => cuidOf.get(id)).filter((x): x is string => !!x))
-    for (const pred of remotePreds(r)) {
-      if (want.has(pred) || !localOf.has(pred)) continue
-      out.push({ kind: 'dep-removed', task: l.name, taskId: l.id, clickupId: r.id, detail: `waits on "${nameOf.get(localOf.get(pred)!)}" only in ClickUp` })
-    }
-  }
-  return out
 }

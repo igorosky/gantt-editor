@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GanttTask } from '../types'
 import type { RemoteTask } from './clickup'
-import { pullFromClickUp, pullRisks, pushRisks, pushToClickUp } from './sync'
+import { findConflicts } from './conflicts'
+import { pullFromClickUp, pushToClickUp, syncBaseOf, type Overrides } from './sync'
 
 const CONFIG = { token: 'pk_test', listId: 'L' }
 const LAST_SYNC = new Date(2026, 9, 10).getTime()
@@ -150,8 +151,12 @@ describe('pushToClickUp', () => {
     )
     expect(writes(calls)).toEqual([])
     expect(entries).toEqual([])
-    // Only the parent baseline is recorded
-    expect([...patches]).toEqual([['a', { remoteParent: null }]])
+    // Only the baselines are recorded: parent, and ClickUp's fields
+    expect([...patches.keys()]).toEqual(['a'])
+    expect(patches.get('a')).toEqual({
+      remoteParent: null,
+      syncBase: { ...syncBaseOf(local('a', { clickupId: 'A', name: 'A', end: new Date(2026, 9, 5), priority: 2, description: 'x' })), deps: '' },
+    })
   })
 
   it('sends only the changed fields and logs ClickUp old -> board new', async () => {
@@ -189,7 +194,7 @@ describe('pushToClickUp', () => {
       [remote('P1'), remote('P2'), remote('C', { parent: 'P1' })],
     )
     expect(writes(calls)).toEqual([{ method: 'PUT', path: '/task/C', query: '', body: { parent: 'P2' } }])
-    expect(patches.get('c')).toEqual({ remoteParent: 'P2' })
+    expect(patches.get('c')).toMatchObject({ remoteParent: 'P2' })
     expect(entries.map(e => e.kind)).toEqual(['moved'])
   })
 
@@ -203,7 +208,7 @@ describe('pushToClickUp', () => {
     const posts = writes(calls)
     expect(posts.map(c => [c.method, c.body?.name])).toEqual([['POST', 'Parent'], ['POST', 'Child']])
     expect(posts[1].body?.parent).toBe('new1')
-    expect(patches.get('m')).toEqual({ clickupId: 'new2', remoteParent: 'new1' })
+    expect(patches.get('m')).toMatchObject({ clickupId: 'new2', remoteParent: 'new1', syncBase: { name: 'Child', deps: '' } })
     expect(entries.map(e => [e.kind, e.task, e.detail])).toEqual([
       ['created', 'Parent', undefined],
       ['created', 'Child', 'subtask of "Parent"'],
@@ -276,55 +281,104 @@ describe('pushToClickUp', () => {
   })
 })
 
-describe('pullRisks', () => {
-  it('flags a board edit that ClickUp has not seen, not a ClickUp change', () => {
-    const risks = pullRisks(
-      [local('a', { clickupId: 'A', name: 'Mine' }), local('b', { clickupId: 'B', name: 'Old' })],
-      [remote('A'), remote('B', { name: 'Theirs', date_updated: AFTER_SYNC })],
-      LAST_SYNC,
+
+describe('sync base and overrides', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('pull records ClickUp as the base under an override, so the next push sends the resolved value', async () => {
+    const theirs = remote('A', { tags: [{ name: 'y' }], description: 'theirs', date_updated: AFTER_SYNC })
+    const overrides: Overrides = new Map([['a', { fields: { tags: [{ name: 'x' }, { name: 'y' }], description: 'mine' } }]])
+    const { tasks, entries } = pullFromClickUp(
+      [local('a', { clickupId: 'A', tags: [{ name: 'x' }], description: 'mine' })],
+      [theirs],
+      overrides,
     )
-    expect(risks).toEqual([{
-      kind: 'updated', task: 'Mine', taskId: 'a', clickupId: 'A',
-      changes: [{ field: 'Name', from: 'Mine', to: 'A' }],
+    expect(tasks[0]).toMatchObject({ tags: [{ name: 'x' }, { name: 'y' }], description: 'mine' })
+    expect(tasks[0].syncBase).toEqual(syncBaseOf(local('a', { name: 'A', tags: [{ name: 'y' }], description: 'theirs' }), []))
+    expect(entries).toEqual([{
+      kind: 'updated', task: 'A', taskId: 'a', clickupId: 'A',
+      changes: [{ field: 'Tags', from: 'x', to: 'x, y' }],
     }])
+
+    expect(findConflicts('push', tasks, [theirs], LAST_SYNC)).toEqual([])
+    const calls = stubClickUp()
+    await pushToClickUp(CONFIG, tasks, [theirs])
+    expect(writes(calls)).toEqual([
+      { method: 'PUT', path: '/task/A', query: '', body: { description: 'mine' } },
+      { method: 'POST', path: '/task/A/tag/x', query: '', body: undefined },
+    ])
   })
 
-  it('flags an unpushed re-parent and an unpushed dependency', () => {
-    const risks = pullRisks(
+  it('pull keeps the board parent and dependency the user chose', () => {
+    const { tasks } = pullFromClickUp(
       [
         local('p', { clickupId: 'P', remoteParent: null }),
         local('c', { clickupId: 'C', parentId: 'p', remoteParent: null, dependencies: ['p'] }),
       ],
       [remote('P'), remote('C')],
-      LAST_SYNC,
+      new Map([['c', { parentId: 'p', deps: { p: true } }]]),
     )
-    expect(risks.map(r => [r.kind, r.task])).toEqual([['moved', 'C'], ['dep-removed', 'C']])
+    expect(byName(tasks, 'C')).toMatchObject({
+      parentId: 'p', remoteParent: null, dependencies: ['p'], syncBase: { deps: '' },
+    })
   })
 
-  it('reports nothing before the first pull or push', () => {
-    expect(pullRisks([local('a', { clickupId: 'A', name: 'Mine' })], [remote('A')], 0)).toEqual([])
-  })
-})
-
-describe('pushRisks', () => {
-  it('flags a task changed in ClickUp since the last sync, not a board edit', () => {
-    const risks = pushRisks(
-      [local('a', { clickupId: 'A', name: 'Mine' }), local('b', { clickupId: 'B', name: 'Old' })],
-      [remote('A'), remote('B', { name: 'Theirs', date_updated: AFTER_SYNC })],
-      LAST_SYNC,
+  it('push writes resolved values to ClickUp and patches the board with them', async () => {
+    const calls = stubClickUp()
+    const overrides: Overrides = new Map([['a', { fields: { name: 'Theirs', tags: [{ name: 'x' }, { name: 'y' }] } }]])
+    const { patches } = await pushToClickUp(
+      CONFIG,
+      [local('a', { clickupId: 'A', name: 'Mine', tags: [{ name: 'x' }] })],
+      [remote('A', { name: 'Theirs', tags: [{ name: 'y' }] })],
+      overrides,
     )
-    expect(risks).toEqual([{
-      kind: 'updated', task: 'Old', taskId: 'b', clickupId: 'B',
-      changes: [{ field: 'Name', from: 'Theirs', to: 'Old' }],
-    }])
+    // The name already matches ClickUp, so only the merged tag goes out
+    expect(writes(calls)).toEqual([{ method: 'POST', path: '/task/A/tag/x', query: '', body: undefined }])
+    expect(patches.get('a')).toMatchObject({
+      name: 'Theirs',
+      tags: [{ name: 'x' }, { name: 'y' }],
+      syncBase: { name: 'Theirs', tags: 'x\ny', deps: '' },
+    })
   })
 
-  it('flags a dependency added in ClickUp that a push would remove', () => {
-    const risks = pushRisks(
-      [local('a', { clickupId: 'A' }), local('b', { clickupId: 'B' })],
-      [remote('A'), remote('B', { dependencies: [dep('B', 'A')], date_updated: AFTER_SYNC })],
-      LAST_SYNC,
+  it('push lets ClickUp win a parent and a dependency on the board', async () => {
+    const calls = stubClickUp()
+    const { patches } = await pushToClickUp(
+      CONFIG,
+      [
+        local('p1', { clickupId: 'P1', remoteParent: null }),
+        local('p2', { clickupId: 'P2', remoteParent: null }),
+        local('c', { clickupId: 'C', parentId: 'p1', remoteParent: 'P1' }),
+      ],
+      [remote('P1'), remote('P2'), remote('C', { parent: 'P2', dependencies: [dep('C', 'P1')] })],
+      new Map([['c', { parentId: 'p2', deps: { p1: true } }]]),
     )
-    expect(risks.map(r => [r.kind, r.task, r.detail])).toEqual([['dep-removed', 'B', 'waits on "A" only in ClickUp']])
+    expect(writes(calls)).toEqual([])
+    expect(patches.get('c')).toMatchObject({ parentId: 'p2', dependencies: ['p1'], remoteParent: 'P2', syncBase: { deps: 'P1' } })
+  })
+
+  it('keeps the old field base when the update fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ err: 'Boom' }), { status: 500 })))
+    const { patches } = await pushToClickUp(
+      CONFIG,
+      [local('a', { clickupId: 'A', name: 'A2', syncBase: { name: 'A', deps: 'X' } })],
+      [remote('A')],
+    )
+    expect(patches.get('a')?.syncBase).toEqual({ name: 'A', deps: '' })
+  })
+
+  it('records ClickUp edges after the push as the dependency base', async () => {
+    stubClickUp()
+    const { patches } = await pushToClickUp(
+      CONFIG,
+      [
+        local('a', { clickupId: 'A' }),
+        local('b', { clickupId: 'B', dependencies: ['a'] }),
+        local('c', { clickupId: 'C' }),
+      ],
+      [remote('A'), remote('B'), remote('C', { dependencies: [dep('C', 'A'), dep('C', 'Z')] }), remote('Z')],
+    )
+    expect(patches.get('b')?.syncBase?.deps).toBe('A')
+    expect(patches.get('c')?.syncBase?.deps).toBe('Z')
   })
 })

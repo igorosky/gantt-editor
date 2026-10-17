@@ -36,7 +36,17 @@ export interface GanttTask {
   // and the time estimate in ms. Never pushed back.
   statusType?: string
   timeEstimate?: number
+  // Field fingerprints both sides agreed on at the last pull / push (see
+  // syncBaseOf in lib/sync.ts): the base of the three-way conflict check.
+  // A missing key means unknown; the check then falls back to lastSyncAt.
+  syncBase?: SyncBase
 }
+
+export type SyncBaseKey =
+  | 'name' | 'type' | 'start' | 'end' | 'status' | 'priority'
+  | 'assignees' | 'tags' | 'description' | 'deps'
+
+export type SyncBase = Partial<Record<SyncBaseKey, string>>
 
 export interface ClickUpConfig {
   token: string
@@ -76,6 +86,7 @@ export type SyncLogKind =
   | 'dep-added'
   | 'dep-removed'
   | 'skipped'
+  | 'resolved' // conflicts the user decided before the run
   | 'info'
   | 'error'
 
@@ -86,12 +97,24 @@ export interface SyncFieldChange {
   to: string
 }
 
+// How one conflict was decided
+export type ResolutionUse = 'board' | 'clickup' | 'merge' | 'edit'
+
+export interface SyncResolvedField {
+  field: string
+  board: string
+  clickup: string
+  result: string
+  how: ResolutionUse
+}
+
 export interface SyncLogEntry {
   kind: SyncLogKind
   task?: string // task name
   taskId?: string // local id, when the row is (still) on the board
   clickupId?: string
   changes?: SyncFieldChange[]
+  resolved?: SyncResolvedField[]
   detail?: string
 }
 
