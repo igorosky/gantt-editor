@@ -129,8 +129,36 @@ describe('computeWorkload: subtasks', () => {
     const done = sub({ statusType: 'done' })
     expect(computeWorkload([parent(), done], WEEKS, { metric: 'count', keysOf: one })
       .buckets.map(b => b.total)).toEqual([1, 1, 1])
+    // Done subtasks do not split an open parent: it keeps its own count
     expect(computeWorkload([parent(), done], WEEKS, { metric: 'count', keysOf: one, includeDone: true })
-      .buckets.map(b => b.total)).toEqual([1, 0, 0])
+      .buckets.map(b => b.total)).toEqual([2, 1, 1])
+  })
+
+  it('never lowers anyone\'s load when done work is included', () => {
+    const tasks = [
+      parent(),
+      sub({ statusType: 'done', assignees: [{ id: 2, username: 'B' }] }),
+      task({ id: 'Q', start: d(10, 19), end: d(10, 30), statusType: 'done', assignees: [{ id: 1, username: 'A' }] }),
+      task({ parentId: 'Q', start: d(10, 20), end: d(10, 21), assignees: [{ id: 2, username: 'B' }] }),
+    ]
+    const off = computeWorkload(tasks, WEEKS, { metric: 'count', keysOf: byAssignee })
+    const on = computeWorkload(tasks, WEEKS, { metric: 'count', keysOf: byAssignee, includeDone: true })
+    expect(off.buckets.map(b => b.byKey.A ?? 0)).toEqual([1, 1, 1])
+    expect(on.buckets.map(b => b.byKey.A ?? 0)).toEqual([1, 1, 1])
+    expect(on.buckets.map(b => b.byKey.B ?? 0)).toEqual([1, 1, 0])
+    off.buckets.forEach((b, i) => {
+      for (const [key, v] of Object.entries(b.byKey)) expect(on.buckets[i].byKey[key]).toBeGreaterThanOrEqual(v)
+    })
+  })
+
+  it('splits a done parent by its included subtasks', () => {
+    const doneParent = parent({ statusType: 'done' })
+    const both = computeWorkload([doneParent, sub({ statusType: 'done' }), sub()], WEEKS,
+      { metric: 'count', keysOf: one, includeDone: true })
+    expect(both.buckets.map(b => b.total)).toEqual([2, 0, 0])
+    const openOnly = [doneParent, sub()]
+    expect(computeWorkload(openOnly, WEEKS, { metric: 'count', keysOf: one, includeDone: true }).buckets.map(b => b.total))
+      .toEqual(computeWorkload(openOnly, WEEKS, { metric: 'count', keysOf: one }).buckets.map(b => b.total))
   })
 
   it('adds a parent\'s own estimate to its subtasks\' hours, and never flags it as missing', () => {

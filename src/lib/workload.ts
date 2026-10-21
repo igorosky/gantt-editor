@@ -86,7 +86,11 @@ export function computeWorkload<T extends GanttTask>(
   // Tasks split into counted subtasks. The count metric skips them, so a
   // parent and its subtasks are not counted twice; hours keep a parent's own
   // estimate, since ClickUp estimates are per task, not rolled up.
-  const containers = parentIdsOf(eligible)
+  // Only open subtasks split an open parent, so including done work never
+  // takes a parent's load away; a done parent is split by any included subtask.
+  const containers = parentIdsOf(eligible.filter(t => !isDone(t)))
+  const doneIds = new Set(eligible.filter(t => isDone(t)).map(t => t.id))
+  for (const id of parentIdsOf(eligible)) if (doneIds.has(id)) containers.add(id)
 
   for (const t of eligible) {
     // A parent carries nothing of its own here: not counted, or no estimate
