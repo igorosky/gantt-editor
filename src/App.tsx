@@ -637,8 +637,7 @@ export default function App() {
       )}
       {exportOpen && (
         <ExportDialog
-          tasks={visibleTasks}
-          allTasks={tasks}
+          source={{ kind: 'board', tasks: visibleTasks, allTasks: tasks }}
           calendar={settings.calendar}
           onClose={() => setExportOpen(false)}
         />

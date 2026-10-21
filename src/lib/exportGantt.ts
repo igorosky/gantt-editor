@@ -40,7 +40,33 @@ export interface ExportOptions {
   depths?: ReadonlyMap<string, number>
   // Week start for week columns, working days for the day view shading
   calendar?: Calendar
+  // Day the today marker sits on (default: now); the portfolio fixes it per mount
+  today?: Date
+  // Collapse glyph on section rows (on-screen chart only, never exported)
+  sectionToggles?: boolean
 }
+
+// A section groups the task rows below it (the portfolio gantt: one project
+// per section). Its summary is precomputed by the caller over the whole
+// project, so a page holding only part of the section still shows all of it.
+export interface ExportSection {
+  id: string
+  name: string
+  color: string
+  taskCount: number
+  span?: { start: Date; end: Date } // first start .. last due date
+  donePct: number                   // 0..1
+  milestones: Date[]
+  collapsed?: boolean
+}
+
+// cont: the header repeated at the top of a page that starts mid-section
+export type ExportRow =
+  | { kind: 'task'; task: GanttTask }
+  | { kind: 'section'; section: ExportSection; cont?: boolean }
+
+export const taskRows = (tasks: GanttTask[]): ExportRow[] =>
+  tasks.map(task => ({ kind: 'task', task }))
 
 export interface BuiltSvg {
   body: string
@@ -53,6 +79,7 @@ export interface BuiltSvg {
 export const ROW_H = 26
 export const HEADER_H = 40 // upper band 20 + lower band 20
 export const TITLE_H = 30
+export const SECTION_H = 32
 const BAR_H = 14
 const MS_SIDE = 12
 const MS_HALF = (MS_SIDE * Math.SQRT2) / 2 // half-width of the rotated square
@@ -122,6 +149,10 @@ export function lhsWidth(columns: LhsColumn[]): number {
   return columns.reduce((sum, c) => sum + COLUMNS[c].width, 0)
 }
 
+export function rowHeight(row: ExportRow): number {
+  return row.kind === 'section' ? SECTION_H : ROW_H
+}
+
 export function headerBlockHeight(opts: { title?: string }): number {
   return HEADER_H + (opts.title ? TITLE_H : 0)
 }
@@ -177,6 +208,21 @@ export function fitWindow(
   return { from, to }
 }
 
+// fitWindow over the task rows plus every section's summary span, so a
+// section bar (whose project may hold tasks that are not shown) stays inside
+export function rowsWindow(
+  rows: ExportRow[], unit: TimeUnit | 'auto' = 'auto', weekStart = DEFAULT_CALENDAR.weekStart,
+): { from: Date; to: Date } {
+  const dated: GanttTask[] = []
+  for (const row of rows) {
+    if (row.kind === 'task') dated.push(row.task)
+    else if (row.section.span) {
+      dated.push({ id: '', name: '', progress: 0, start: row.section.span.start, end: row.section.span.end })
+    }
+  }
+  return fitWindow(dated, unit, weekStart)
+}
+
 /* ---------------------------------------------------------- text + escaping */
 
 let measureCtx: CanvasRenderingContext2D | null = null
@@ -186,7 +232,7 @@ function font(size: number, weight = 400): string {
 }
 
 function measure(text: string, f: string): number {
-  if (!measureCtx) {
+  if (!measureCtx && typeof document !== 'undefined') {
     measureCtx = document.createElement('canvas').getContext('2d')
   }
   if (!measureCtx) return text.length * 6 // headless fallback
@@ -225,6 +271,19 @@ function darken(color: string, amount = 0.16): string {
   const n = parseInt(hex, 16)
   const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
     .map(v => Math.max(0, Math.round(v * (1 - amount))))
+    .map(v => v.toString(16).padStart(2, '0'))
+  return `#${ch.join('')}`
+}
+
+// Opaque mix with white, for bands that must cover the grid below them
+function tint(color: string, amount = 0.86): string {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())
+  if (!m) return C.headerBg
+  let hex = m[1]
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
+  const n = parseInt(hex, 16)
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    .map(v => Math.round(v + (255 - v) * amount))
     .map(v => v.toString(16).padStart(2, '0'))
   return `#${ch.join('')}`
 }
@@ -284,7 +343,7 @@ interface BarGeom {
 
 /* -------------------------------------------------------------------- build */
 
-export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg {
+export function buildGanttSvg(rows: ExportRow[], opts: ExportOptions): BuiltSvg {
   const columns = opts.columns.includes('name') ? opts.columns : ['name' as LhsColumn, ...opts.columns]
   const lhsW = lhsWidth(columns)
   const ppd = PX_PER_DAY[opts.unit]
@@ -292,14 +351,20 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   const chartW = chartWidth(opts.from, opts.to, opts.unit)
   const titleH = opts.title ? TITLE_H : 0
   const bodyY = titleH + HEADER_H
-  const height = bodyY + tasks.length * ROW_H
+  const tops: number[] = []
+  let bodyH = 0
+  for (const row of rows) {
+    tops.push(bodyY + bodyH)
+    bodyH += rowHeight(row)
+  }
+  const height = bodyY + bodyH
   const width = lhsW + chartW
 
   // chart-local x for a date (day-granular)
   const x = (d: Date): number => daysBetween(opts.from, d) * ppd
   const cx = (v: number): number => lhsW + v // chart-local -> absolute
 
-  const rowTop = (i: number): number => bodyY + i * ROW_H
+  const rowTop = (i: number): number => tops[i]
   const barTop = (i: number): number => rowTop(i) + (ROW_H - BAR_H) / 2
 
   const parts: string[] = []
@@ -312,13 +377,15 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
     parts.push(text(CELL_PAD, titleH / 2 + 6, opts.title, 15, C.text, { weight: 600 }))
   }
 
-  /* row bands */
-  for (let i = 0; i < tasks.length; i++) {
-    if (i % 2 === 1) parts.push(rect(0, rowTop(i), width, ROW_H, C.rowAlt))
+  /* row bands, restarting under every section */
+  let band = 0
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].kind === 'section') { band = 0; continue }
+    if (band++ % 2 === 1) parts.push(rect(0, rowTop(i), width, ROW_H, C.rowAlt))
   }
 
   /* non-working day shading (day view only) */
-  if (opts.unit === 'day' && tasks.length > 0) {
+  if (opts.unit === 'day' && rows.length > 0) {
     for (const d of unitStarts(opts.from, opts.to, 'day')) {
       if (isWorkday(d, cal.workdays)) continue
       parts.push(rect(cx(x(d)), bodyY, ppd, height - bodyY, C.weekend))
@@ -326,7 +393,7 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   }
 
   /* today highlight */
-  const today = startOfDay(new Date())
+  const today = startOfDay(opts.today ?? new Date())
   const todayVisible = opts.showToday && today >= startOfDay(opts.from) && today <= startOfDay(opts.to)
   if (todayVisible) {
     parts.push(rect(cx(x(today)), bodyY, Math.max(2, ppd), height - bodyY, '#fff4e0'))
@@ -404,8 +471,10 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   /* row separators + cell text */
   const cellFont = font(11)
   const nameFont = font(11, 500)
-  for (let i = 0; i < tasks.length; i++) {
-    const t = tasks[i]
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.kind !== 'task') continue
+    const t = row.task
     const ty = rowTop(i) + ROW_H / 2 + 4
     if (i > 0) parts.push(line(0, rowTop(i), width, rowTop(i), C.border, ' stroke-width="1"'))
 
@@ -434,10 +503,76 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
   }
   parts.push(line(0, height - 0.5, width, height - 0.5, C.border, ' stroke-width="1"'))
 
+  /* section headers, covering the grid and the column lines below them */
+  const sectionFont = font(12, 600)
+  const countFont = font(10)
+  const pctFont = font(10, 600)
+  const sectionRow = (s: ExportSection, cont: boolean, top: number): string => {
+    const mid = top + SECTION_H / 2
+    const g: string[] = []
+    g.push(rect(0, top, width, SECTION_H, tint(s.color)))
+    g.push(line(0, top, width, top, C.borderStrong, ' stroke-width="1"'))
+    g.push(line(lhsW, top, lhsW, top + SECTION_H, C.borderStrong, ' stroke-width="1"'))
+
+    // left: toggle, swatch, name, task count
+    let tx = CELL_PAD
+    if (opts.sectionToggles) {
+      g.push(text(tx, mid + 4, s.collapsed ? '▸' : '▾', 11, C.textMid))
+      tx += 14
+    }
+    g.push(rect(tx, mid - 5, 10, 10, s.color, ' rx="2"'))
+    tx += 16
+    const count = `${s.taskCount} task${s.taskCount === 1 ? '' : 's'}`
+    const name = s.name + (cont ? ' (cont.)' : '')
+    const nameRoom = lhsW - tx - measure(count, countFont) - 2 * CELL_PAD
+    g.push(text(tx, mid + 4, fitText(name, nameRoom, sectionFont), 12, C.text, { weight: 600 }))
+    g.push(text(lhsW - CELL_PAD, mid + 4, count, 10, C.textMuted, { anchor: 'end' }))
+
+    // right: summary bar with the done share in full colour, milestones on top
+    if (s.span) {
+      const rawX0 = x(s.span.start)
+      const rawX1 = x(s.span.end) + ppd
+      if (rawX1 > 0 && rawX0 < chartW) {
+        const x0 = Math.max(0, rawX0)
+        const x1 = Math.min(chartW, rawX1)
+        g.push(rect(cx(x0), mid - 5, Math.max(2, x1 - x0), 10, s.color, ' rx="3" fill-opacity="0.3"'))
+        const doneX1 = Math.min(x1, rawX0 + (rawX1 - rawX0) * s.donePct)
+        if (s.donePct > 0 && doneX1 > x0) {
+          g.push(rect(cx(x0), mid - 5, Math.max(2, doneX1 - x0), 10, s.color, ' rx="3"'))
+        }
+        const pct = `${Math.round(s.donePct * 100)}%`
+        if (x1 + 6 + measure(pct, pctFont) <= chartW) {
+          g.push(text(cx(x1) + 6, mid + 4, pct, 10, C.textMid, { weight: 600 }))
+        }
+      }
+    } else {
+      g.push(text(cx(4) + 4, mid + 4, 'no dated tasks', 10, C.textMuted))
+    }
+    for (const d of s.milestones) {
+      const centre = x(d) + ppd / 2
+      if (centre < 0 || centre > chartW) continue
+      const gx = cx(centre)
+      g.push(
+        `<rect x="${r(gx - 4.5)}" y="${r(mid - 4.5)}" width="9" height="9" ` +
+        `fill="${darken(s.color, 0.3)}" stroke="#fff" stroke-width="1" ` +
+        `transform="rotate(45 ${r(gx)} ${r(mid)})"/>`,
+      )
+    }
+    // cursor as an attribute: it reaches <use> copies, which CSS rules do not
+    const hand = opts.sectionToggles ? ' cursor="pointer"' : ''
+    return `<g data-section="${esc(s.id)}"${hand}>${g.join('')}</g>`
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.kind === 'section') parts.push(sectionRow(row.section, !!row.cont, rowTop(i)))
+  }
+
   /* bars + milestones */
   const geoms = new Map<string, BarGeom>()
-  for (let i = 0; i < tasks.length; i++) {
-    const t = tasks[i]
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.kind !== 'task') continue
+    const t = row.task
     const ms = isMilestone(t)
     const start = ms ? (t.end ?? t.start) : t.start
     const end = ms ? (t.end ?? t.start) : t.end
@@ -507,13 +642,10 @@ export function buildGanttSvg(tasks: GanttTask[], opts: ExportOptions): BuiltSvg
 
   /* dependency arrows */
   if (opts.showArrows) {
-    const index = new Map<string, number>()
-    tasks.forEach((t, i) => index.set(t.id, i))
-    for (let i = 0; i < tasks.length; i++) {
-      const t = tasks[i]
+    for (const row of rows) {
+      if (row.kind !== 'task') continue
+      const t = row.task
       for (const depId of t.dependencies ?? []) {
-        const fromIdx = index.get(depId)
-        if (fromIdx === undefined) continue
         const fromG = geoms.get(depId)
         const toG = geoms.get(t.id)
         if (!fromG || !toG) continue

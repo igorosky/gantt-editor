@@ -72,6 +72,20 @@ describe('portfolio tasks and cache', () => {
     ])
   })
 
+  it('keeps the predecessors only, and they survive the cache', () => {
+    const t = toPortfolioTask(remote({
+      id: 'b',
+      dependencies: [
+        { task_id: 'b', depends_on: 'a', type: 1 },
+        { task_id: 'c', depends_on: 'b', type: 1 }, // b is c's predecessor, not the other way
+      ],
+    }), 'L1')
+    expect(t.dependencies).toEqual(['a'])
+    expect(toPortfolioTask(remote({ id: 'x' }), 'L1').dependencies).toBeUndefined()
+    const back = deserializeCache(serializeCache({ L1: { tasks: [t] } }))
+    expect(back.L1.tasks[0].dependencies).toEqual(['a'])
+  })
+
   it('colors projects in fixed slots, then neutral', () => {
     expect(projectColor(0)).toBe('#2a78d6')
     expect(projectColor(8)).toBe(OTHER_COLOR)

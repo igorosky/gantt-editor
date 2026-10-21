@@ -2,12 +2,11 @@
 // download, or paginate it and hand it to the browser's print dialog (which is
 // what produces the PDF, so no PDF library is needed).
 
-import type { GanttTask } from '../types'
 import {
-  buildGanttSvg, chartWidth, headerBlockHeight, lhsWidth, svgDocument,
-  unitStarts, addDays, ROW_H,
+  buildGanttSvg, chartWidth, headerBlockHeight, lhsWidth, rowHeight, svgDocument,
+  unitStarts, addDays,
 } from './exportGantt'
-import type { BuiltSvg, ExportOptions } from './exportGantt'
+import type { BuiltSvg, ExportOptions, ExportRow } from './exportGantt'
 
 /* ------------------------------------------------------------------- paper */
 
@@ -84,49 +83,122 @@ function dateSlices(
   return out
 }
 
+// Splits rows into pages of at most availH px (a row taller than that still
+// gets a page of its own). A section header never ends a page: it moves on with
+// its rows. A page that starts inside a section opens with that header again,
+// marked `cont`. breakPerSection starts every section on a fresh page.
+export function paginateRows(
+  rows: ExportRow[], availH: number, breakPerSection = false,
+): ExportRow[][] {
+  const pages: ExportRow[][] = []
+  let page: ExportRow[] = []
+  let used = 0
+  let header: ExportRow | null = null // the section the next row belongs to
+
+  const flush = () => {
+    // a header with nothing under it goes to the next page instead
+    let carry: ExportRow | null = null
+    if (page.length > 1 && page[page.length - 1].kind === 'section') carry = page.pop()!
+    if (page.length) pages.push(page)
+    page = []
+    used = 0
+    if (carry) { page.push(carry); used = rowHeight(carry) }
+  }
+
+  for (const row of rows) {
+    const h = rowHeight(row)
+    if (row.kind === 'section') {
+      if (breakPerSection && page.length) flush()
+      if (used + h > availH && page.length) flush()
+      page.push(row)
+      used += h
+      header = row
+      continue
+    }
+    if (used + h > availH && page.length) {
+      flush()
+      // carried header already opens the page; otherwise repeat the current one
+      if (header && page.length === 0) {
+        const cont: ExportRow = { ...header, cont: true }
+        if (rowHeight(cont) + h <= availH) { page.push(cont); used = rowHeight(cont) }
+      }
+    }
+    page.push(row)
+    used += h
+  }
+  if (page.length) pages.push(page)
+  return pages
+}
+
+// Groups of rows printed as separate sheets: the whole set, or one per section
+function sheetGroups(rows: ExportRow[], perSection: boolean): ExportRow[][] {
+  if (!perSection || !rows.some(r => r.kind === 'section')) return [rows]
+  const out: ExportRow[][] = []
+  for (const row of rows) {
+    if (row.kind === 'section' || out.length === 0) out.push([])
+    out[out.length - 1].push(row)
+  }
+  return out
+}
+
+function pageRows(
+  rows: ExportRow[], opts: ExportOptions, geom: PaperGeom, multipage: boolean, perSection: boolean,
+): ExportRow[][] {
+  if (!multipage) return sheetGroups(rows, perSection)
+  return paginateRows(rows, geom.usableHpx - headerBlockHeight(opts), perSection)
+}
+
+function pageSlices(opts: ExportOptions, geom: PaperGeom, multipage: boolean): { from: Date; to: Date }[] {
+  if (!multipage) return [{ from: opts.from, to: opts.to }]
+  const chartRoom = Math.max(120, geom.usableWpx - lhsWidth(opts.columns))
+  return dateSlices(opts.from, opts.to, opts.unit, chartRoom, opts.calendar?.weekStart)
+}
+
+// Footer text for a page: the sections on it, or its task range
+function rowsLabel(rows: ExportRow[], firstTask: number, totalTasks: number): string {
+  const names = rows.flatMap(r => (r.kind === 'section' ? [r.section.name] : []))
+  if (names.length) {
+    return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ')
+  }
+  const n = rows.length
+  return `Tasks ${firstTask + 1}–${firstTask + n} of ${totalTasks}`
+}
+
 export function buildPages(
-  tasks: GanttTask[],
+  rows: ExportRow[],
   opts: ExportOptions,
   geom: PaperGeom,
   multipage: boolean,
+  perSection = false,
 ): PageSpec[] {
-  if (!multipage) {
-    // Everything on one sheet; the print CSS scales it down to fit.
-    const built = buildGanttSvg(tasks, opts)
-    return [{ built, label: `${fmtShort(opts.from)} – ${fmtShort(opts.to)}` }]
-  }
-
-  const rowsPerPage = Math.max(
-    1,
-    Math.floor((geom.usableHpx - headerBlockHeight(opts)) / ROW_H),
-  )
-  const chartRoom = Math.max(120, geom.usableWpx - lhsWidth(opts.columns))
-  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom, opts.calendar?.weekStart)
+  const groups = pageRows(rows, opts, geom, multipage, perSection)
+  const slices = pageSlices(opts, geom, multipage)
+  const totalTasks = rows.filter(r => r.kind === 'task').length
 
   const pages: PageSpec[] = []
-  for (let r = 0; r < Math.max(1, tasks.length); r += rowsPerPage) {
-    const rowSlice = tasks.slice(r, r + rowsPerPage)
-    if (rowSlice.length === 0) break
+  let firstTask = 0
+  for (const group of groups) {
+    // a single scaled sheet of plain tasks is labelled by its dates alone
+    const what = !multipage && !group.some(r => r.kind === 'section')
+      ? ''
+      : rowsLabel(group, firstTask, totalTasks)
     for (const s of slices) {
+      const when = `${fmtShort(s.from)} – ${fmtShort(s.to)}`
       pages.push({
-        built: buildGanttSvg(rowSlice, { ...opts, from: s.from, to: s.to }),
-        label:
-          `Tasks ${r + 1}–${r + rowSlice.length} of ${tasks.length}` +
-          `  ·  ${fmtShort(s.from)} – ${fmtShort(s.to)}`,
+        built: buildGanttSvg(group, { ...opts, from: s.from, to: s.to }),
+        label: what ? `${what}  ·  ${when}` : when,
       })
     }
+    firstTask += group.filter(r => r.kind === 'task').length
   }
   return pages
 }
 
 export function pageCount(
-  tasks: GanttTask[], opts: ExportOptions, geom: PaperGeom, multipage: boolean,
+  rows: ExportRow[], opts: ExportOptions, geom: PaperGeom, multipage: boolean, perSection = false,
 ): number {
-  if (!multipage) return 1
-  const rowsPerPage = Math.max(1, Math.floor((geom.usableHpx - headerBlockHeight(opts)) / ROW_H))
-  const chartRoom = Math.max(120, geom.usableWpx - lhsWidth(opts.columns))
-  const slices = dateSlices(opts.from, opts.to, opts.unit, chartRoom, opts.calendar?.weekStart)
-  return Math.max(1, Math.ceil(tasks.length / rowsPerPage)) * slices.length
+  return Math.max(1, pageRows(rows, opts, geom, multipage, perSection).length) *
+    pageSlices(opts, geom, multipage).length
 }
 
 /* --------------------------------------------------------------------- PNG */

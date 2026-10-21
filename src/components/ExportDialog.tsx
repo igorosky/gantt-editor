@@ -3,20 +3,36 @@ import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
 import { DatePicker } from './DatePicker'
 import {
-  COLUMNS, COLUMN_ORDER, autoUnit, buildGanttSvg, fitWindow, lhsWidth, svgDocument,
+  COLUMNS, COLUMN_ORDER, autoUnit, buildGanttSvg, lhsWidth, rowsWindow, svgDocument, taskRows,
 } from '../lib/exportGantt'
-import type { ExportOptions, LhsColumn, TimeUnit } from '../lib/exportGantt'
+import type { ExportOptions, ExportRow, LhsColumn, TimeUnit } from '../lib/exportGantt'
 import {
   PAPER_LABELS, buildPages, downloadPng, effectiveScale, pageCount, paperGeom, printPages,
 } from '../lib/exportOutput'
 import type { PaperName } from '../lib/exportOutput'
-import { EMPTY_CRITICAL, computeCriticalPath } from '../lib/criticalPath'
+import { EMPTY_CRITICAL, computeCriticalPath, type CriticalPath } from '../lib/criticalPath'
 import { buildTree, flattenTree, selectionDepths } from '../lib/tree'
 import type { Calendar } from '../lib/dates'
 
+export type UnitChoice = TimeUnit | 'auto'
+
+// board: the board's tasks, picked in the dialog. sections: rows already
+// chosen elsewhere (the portfolio gantt), one section per project; the dialog
+// opens with that view's unit and critical path setting.
+export type ExportSource =
+  | { kind: 'board'; tasks: GanttTask[]; allTasks: GanttTask[] } // tasks: visible (filters applied)
+  | {
+      kind: 'sections'
+      rows: ExportRow[]
+      depths: ReadonlyMap<string, number>
+      critical: CriticalPath
+      unit: UnitChoice
+      criticalOn: boolean
+      today?: Date
+    }
+
 interface Props {
-  tasks: GanttTask[]      // currently visible (filters applied)
-  allTasks: GanttTask[]
+  source: ExportSource
   calendar: Calendar
   onClose: () => void
 }
@@ -24,7 +40,8 @@ interface Props {
 type Format = 'png' | 'pdf'
 type Scope = 'visible' | 'all' | 'pick'
 type CritScope = 'project' | 'export'
-type UnitChoice = TimeUnit | 'auto'
+
+const NO_TASKS: GanttTask[] = []
 
 const STORAGE_KEY = 'gantt-export-opts'
 
@@ -41,6 +58,7 @@ interface StoredOpts {
   paper: PaperName
   landscape: boolean
   multipage: boolean
+  pagePerSection: boolean
   pngScale: number
 }
 
@@ -57,6 +75,7 @@ const DEFAULTS: StoredOpts = {
   paper: 'a4',
   landscape: true,
   multipage: false,
+  pagePerSection: false,
   pngScale: 2,
 }
 
@@ -76,8 +95,11 @@ function todayStamp(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
+export function ExportDialog({ source, calendar, onClose }: Props) {
   const stored = useMemo(loadStored, [])
+  const sections = source.kind === 'sections' ? source : null
+  const tasks = source.kind === 'board' ? source.tasks : NO_TASKS
+  const allTasks = source.kind === 'board' ? source.allTasks : NO_TASKS
 
   const [format, setFormat] = useState<Format>(stored.format)
   const [scope, setScope] = useState<Scope>(stored.scope)
@@ -86,16 +108,17 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
   const [rangeMode, setRangeMode] = useState<'fit' | 'custom'>('fit')
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined)
   const [customTo, setCustomTo] = useState<Date | undefined>(undefined)
-  const [unitChoice, setUnitChoice] = useState<UnitChoice>(stored.unit)
+  const [unitChoice, setUnitChoice] = useState<UnitChoice>(sections?.unit ?? stored.unit)
   const [columnSet, setColumnSet] = useState<Set<LhsColumn>>(() => new Set(stored.columns))
   const [title, setTitle] = useState('')
   const [showArrows, setShowArrows] = useState(stored.showArrows)
   const [showToday, setShowToday] = useState(stored.showToday)
-  const [highlightCritical, setHighlightCritical] = useState(stored.highlightCritical)
+  const [highlightCritical, setHighlightCritical] = useState(sections?.criticalOn ?? stored.highlightCritical)
   const [critScope, setCritScope] = useState<CritScope>(stored.critScope)
   const [paper, setPaper] = useState<PaperName>(stored.paper)
   const [landscape, setLandscape] = useState(stored.landscape)
   const [multipage, setMultipage] = useState(stored.multipage)
+  const [pagePerSection, setPagePerSection] = useState(stored.pagePerSection)
   const [pngScale, setPngScale] = useState(stored.pngScale)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -109,16 +132,21 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
     return () => document.removeEventListener('keydown', fn)
   }, [onClose])
 
+  // A sections source brings its own unit and critical toggle; the board's
+  // stored ones stay as they were
+  const boardSource = !sections
   useEffect(() => {
     const toStore: StoredOpts = {
       format, scope, includeDateless,
       columns: COLUMN_ORDER.filter(c => columnSet.has(c)),
-      unit: unitChoice, showArrows, showToday, highlightCritical, critScope,
-      paper, landscape, multipage, pngScale,
+      unit: boardSource ? unitChoice : stored.unit,
+      showArrows, showToday,
+      highlightCritical: boardSource ? highlightCritical : stored.highlightCritical,
+      critScope, paper, landscape, multipage, pagePerSection, pngScale,
     }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore)) } catch { /* quota */ }
-  }, [format, scope, includeDateless, columnSet, unitChoice, showArrows, showToday,
-      highlightCritical, critScope, paper, landscape, multipage, pngScale])
+  }, [format, scope, includeDateless, columnSet, unitChoice, showArrows, showToday, boardSource, stored,
+      highlightCritical, critScope, paper, landscape, multipage, pagePerSection, pngScale])
 
   /* ------------------------------------------------------------ derived */
 
@@ -134,8 +162,20 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
     return includeDateless ? base : base.filter(t => t.start || t.end)
   }, [scope, tasks, treeRows, picked, includeDateless])
 
+  const sectionRows = sections?.rows
+  const rows = useMemo<ExportRow[]>(
+    () => sectionRows ?? taskRows(selected),
+    [sectionRows, selected],
+  )
+  const taskCount = useMemo(() => rows.filter(r => r.kind === 'task').length, [rows])
+  const sectionCount = rows.length - taskCount
+
   // Like the critical path, computed over the whole selection before paging
-  const depths = useMemo(() => selectionDepths(selected, buildTree(allTasks)), [selected, allTasks])
+  const sectionDepths = sections?.depths
+  const depths = useMemo(
+    () => sectionDepths ?? selectionDepths(selected, buildTree(allTasks)),
+    [sectionDepths, selected, allTasks],
+  )
 
   const columns = useMemo(
     () => COLUMN_ORDER.filter(c => c === 'name' || columnSet.has(c)),
@@ -143,8 +183,8 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
   )
 
   const fitted = useMemo(
-    () => fitWindow(selected, unitChoice, calendar.weekStart),
-    [selected, unitChoice, calendar.weekStart],
+    () => rowsWindow(rows, unitChoice, calendar.weekStart),
+    [rows, unitChoice, calendar.weekStart],
   )
   const from = rangeMode === 'custom' ? (customFrom ?? fitted.from) : fitted.from
   const to = rangeMode === 'custom' ? (customTo ?? fitted.to) : fitted.to
@@ -154,12 +194,13 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
   // Computed once over the whole set being exported, never per page: buildPages
   // hands each page a slice of the rows, which would otherwise yield a different
   // path on every page.
+  const sectionCritical = sections?.critical
   const critical = useMemo(
-    () => (highlightCritical
-      ? computeCriticalPath(critScope === 'export' ? selected : allTasks)
-      : EMPTY_CRITICAL),
-    [highlightCritical, critScope, selected, allTasks],
+    () => (!highlightCritical ? EMPTY_CRITICAL
+      : sectionCritical ?? computeCriticalPath(critScope === 'export' ? selected : allTasks)),
+    [highlightCritical, sectionCritical, critScope, selected, allTasks],
   )
+  const perSection = !!sections && pagePerSection
 
   const opts: ExportOptions = useMemo(() => ({
     columns, from, to, unit,
@@ -169,17 +210,18 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
     criticalEdges: critical.edges,
     depths,
     calendar,
-  }), [columns, from, to, unit, title, showToday, showArrows, critical, depths, calendar])
+    today: sections?.today,
+  }), [columns, from, to, unit, title, showToday, showArrows, critical, depths, calendar, sections?.today])
 
   const built = useMemo(
-    () => (selected.length && rangeValid ? buildGanttSvg(selected, opts) : null),
-    [selected, opts, rangeValid],
+    () => (rows.length && rangeValid ? buildGanttSvg(rows, opts) : null),
+    [rows, opts, rangeValid],
   )
 
   const geom = useMemo(() => paperGeom(paper, landscape), [paper, landscape])
   const pages = useMemo(
-    () => (built ? pageCount(selected, opts, geom, multipage) : 0),
-    [built, selected, opts, geom, multipage],
+    () => (built ? pageCount(rows, opts, geom, multipage, perSection) : 0),
+    [built, rows, opts, geom, multipage, perSection],
   )
 
   const realScale = built ? effectiveScale(built.width, built.height, pngScale) : pngScale
@@ -212,11 +254,12 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
     setBusy(true)
     setError(null)
     try {
+      const name = sections ? 'portfolio-gantt' : 'gantt'
       if (format === 'png') {
-        await downloadPng(built, pngScale, `gantt-${todayStamp()}.png`)
+        await downloadPng(built, pngScale, `${name}-${todayStamp()}.png`)
       } else {
-        printPages(buildPages(selected, opts, geom, multipage), geom,
-          title.trim() || `Gantt ${todayStamp()}`)
+        printPages(buildPages(rows, opts, geom, multipage, perSection), geom,
+          title.trim() || `${sections ? 'Portfolio gantt' : 'Gantt'} ${todayStamp()}`)
       }
       onClose()
     } catch (e) {
@@ -245,6 +288,15 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
           <div className="exp-opts">
 
             {/* --------------------------------------------------- tasks */}
+            {sections ? (
+            <section className="exp-group">
+              <div className="exp-group-title">Projects</div>
+              <div className="exp-hint">
+                {sectionCount} project{sectionCount === 1 ? '' : 's'}, {taskCount} task{taskCount === 1 ? '' : 's'},
+                as shown in the Gantt tab. Change which tasks appear there.
+              </div>
+            </section>
+            ) : (
             <section className="exp-group">
               <div className="exp-group-title">Tasks</div>
               <label className="exp-radio">
@@ -281,6 +333,7 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
                 Include tasks without dates
               </label>
             </section>
+            )}
 
             {/* ---------------------------------------------- time period */}
             <section className="exp-group">
@@ -365,7 +418,10 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
                 />
                 Critical path
               </label>
-              {highlightCritical && (
+              {highlightCritical && sections && (
+                <div className="exp-hint">Each project's own longest chain.</div>
+              )}
+              {highlightCritical && !sections && (
                 <div className="exp-seg exp-seg--sm">
                   <button
                     type="button"
@@ -414,10 +470,18 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
                   <input type="checkbox" checked={multipage} onChange={e => setMultipage(e.target.checked)} />
                   Allow multiple pages
                 </label>
+                {sections && (
+                  <label className="exp-check">
+                    <input type="checkbox" checked={pagePerSection} onChange={e => setPagePerSection(e.target.checked)} />
+                    Each project on its own page
+                  </label>
+                )}
                 <div className="exp-hint">
                   {multipage
                     ? `Splits into ${pages} page${pages === 1 ? '' : 's'}; the left columns and the date header repeat on each one.`
-                    : 'The whole chart is scaled down onto a single page.'}
+                    : perSection
+                      ? `${pages} page${pages === 1 ? '' : 's'}, one per project, each scaled down to fit.`
+                      : 'The whole chart is scaled down onto a single page.'}
                 </div>
                 <div className="exp-hint">
                   Export opens the print dialog. Choose “Save as PDF” as the destination.
@@ -447,11 +511,13 @@ export function ExportDialog({ tasks, allTasks, calendar, onClose }: Props) {
             <div className="exp-preview">
               {built
                 ? <div dangerouslySetInnerHTML={{ __html: svgDocument(built) }} />
-                : <p className="exp-empty">No tasks selected.</p>}
+                : <p className="exp-empty">{sections ? 'No projects to show.' : 'No tasks selected.'}</p>}
             </div>
             {built && (
               <div className="exp-hint">
-                {selected.length} task{selected.length === 1 ? '' : 's'} · {built.width} × {built.height} px
+                {taskCount} task{taskCount === 1 ? '' : 's'}
+                {sections && ` in ${sectionCount} project${sectionCount === 1 ? '' : 's'}`}
+                {' '}· {built.width} × {built.height} px
               </div>
             )}
           </div>

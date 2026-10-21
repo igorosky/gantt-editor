@@ -4,6 +4,7 @@ import type { PortfolioState } from '../../hooks/usePortfolio'
 import type { PortfolioTab } from '../../hooks/useHashRoute'
 import { OverviewTab } from './OverviewTab'
 import { RoadmapTab } from './RoadmapTab'
+import { GanttTab } from './GanttTab'
 import { WorkloadTab } from './WorkloadTab'
 import { PeopleTab } from './PeopleTab'
 import { ProjectPicker } from './ProjectPicker'
@@ -23,6 +24,7 @@ interface Props {
 const TABS: Array<[PortfolioTab, string]> = [
   ['overview', 'Overview'],
   ['roadmap', 'Roadmap'],
+  ['gantt', 'Gantt'],
   ['workload', 'Workload'],
   ['people', 'People'],
 ]
@@ -137,6 +139,7 @@ export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu,
           <OverviewTab projects={visible} today={today} teamId={teamId} onOpenBoard={onOpenBoard} settings={settings} />
         )}
         {tab === 'roadmap' && <RoadmapTab projects={visible} today={today} settings={settings} />}
+        {tab === 'gantt' && <GanttTab projects={visible} today={today} settings={settings} />}
         {tab === 'workload' && <WorkloadTab projects={visible} today={today} settings={settings} />}
         {tab === 'people' && <PeopleTab projects={visible} today={today} settings={settings} />}
       </div>

@@ -4,7 +4,7 @@
 import type { Assignee, GanttTask } from '../types'
 import { reviveTask } from '../hooks/useTasks'
 import { getAllTasks, type RemoteTask } from './clickup'
-import { mapRemoteTask } from './sync'
+import { mapRemoteTask, remotePreds } from './sync'
 import { contentWarningIds } from './warnings'
 import { DEFAULT_DOD_KEYWORDS } from './settings'
 import { addDays, startOfDay } from './dates'
@@ -57,14 +57,21 @@ export const projectPath = (ref: ProjectRef): string =>
 // hand (with the DoD keywords of that moment), then the description is dropped
 // to keep localStorage small. Which warnings show is decided later, from the
 // settings (warnings.applyWarningSettings).
-// Ids are ClickUp ids here, so the remote parent id is the local one too.
+// Ids are ClickUp ids here, so the remote parent and predecessor ids are the
+// local ones too.
 export function toPortfolioTask(
   r: RemoteTask, projectId: string, dodKeywords = DEFAULT_DOD_KEYWORDS,
 ): PortfolioTask {
   const t = mapRemoteTask(r, r.id)
   const ids = contentWarningIds(t, dodKeywords)
   delete t.description
-  return { ...t, ...(r.parent ? { parentId: r.parent } : {}), projectId, warningIds: ids }
+  const deps = remotePreds(r)
+  return {
+    ...t,
+    ...(r.parent ? { parentId: r.parent } : {}),
+    ...(deps.length ? { dependencies: deps } : {}),
+    projectId, warningIds: ids,
+  }
 }
 
 export function fromBoardTask(
@@ -163,6 +170,7 @@ interface DemoTask {
   who?: Assignee[]
   dod?: boolean
   parent?: number // index of the parent task within the project
+  dep?: number[]  // indexes of the predecessors within the project
 }
 
 const STATUS: Record<DemoTask['st'], { status: string; color: string }> = {
@@ -176,13 +184,13 @@ const DEMO: Array<{ ref: ProjectRef; tasks: DemoTask[] }> = [
     ref: { listId: 'demo-web', name: 'Website relaunch', spaceName: 'Marketing', folderName: 'Q4' },
     tasks: [
       { name: 'Design system', s: -30, e: -10, st: 'done', h: 40, who: [P.alice], dod: true },
-      { name: 'Landing pages', s: -20, e: -3, st: 'custom', h: 24, who: [P.alice, P.bob], dod: true },
+      { name: 'Landing pages', s: -20, e: -3, st: 'custom', h: 24, who: [P.alice, P.bob], dod: true, dep: [0] },
       { name: 'CMS migration', s: -15, e: -1, st: 'custom', h: 16, who: [P.bob] },
-      { name: 'Bug bash', s: -2, e: 4, st: 'custom', h: 24, who: [P.bob], dod: true },
+      { name: 'Bug bash', s: -2, e: 4, st: 'custom', h: 24, who: [P.bob], dod: true, dep: [1, 2] },
       { name: 'Beta launch', e: -2, ms: true, st: 'open' },
       { name: 'SEO audit', s: 2, e: 12, st: 'open', h: 12, who: [P.carol], dod: true },
       { name: 'Content freeze', st: 'open' },
-      { name: 'Public launch', e: 21, ms: true, st: 'open' },
+      { name: 'Public launch', e: 21, ms: true, st: 'open', dep: [3, 5] },
     ],
   },
   {
@@ -191,8 +199,8 @@ const DEMO: Array<{ ref: ProjectRef; tasks: DemoTask[] }> = [
       { name: 'Auth rework', s: -12, e: -4, st: 'done', h: 20, who: [P.bob], dod: true },
       { name: 'Offline mode', s: -5, e: 10, st: 'open', h: 30, who: [P.bob], dod: true },
       { name: 'Push notifications', s: 0, e: 14, st: 'custom', h: 24, who: [P.bob, P.eve], dod: true },
-      { name: 'Store listing', s: 15, e: 18, st: 'open', h: 6, who: [P.eve], dod: true },
-      { name: 'Release candidate', e: 20, ms: true, st: 'open' },
+      { name: 'Store listing', s: 15, e: 18, st: 'open', h: 6, who: [P.eve], dod: true, dep: [2] },
+      { name: 'Release candidate', e: 20, ms: true, st: 'open', dep: [1, 3] },
       { name: 'Accessibility pass', s: 8, e: 22, st: 'open', h: 18, who: [P.carol], dod: true },
     ],
   },
@@ -201,17 +209,17 @@ const DEMO: Array<{ ref: ProjectRef; tasks: DemoTask[] }> = [
     tasks: [
       { name: 'Warehouse schema', s: 1, e: 20, st: 'custom', h: 60, who: [P.dave], dod: true },
       { name: 'Ingestion jobs', s: 10, e: 40, st: 'open', dod: true },
-      { name: 'Batch loader', s: 10, e: 24, st: 'open', h: 40, who: [P.dave], dod: true, parent: 1 },
+      { name: 'Batch loader', s: 10, e: 24, st: 'open', h: 40, who: [P.dave], dod: true, parent: 1, dep: [0] },
       { name: 'Streaming loader', s: 22, e: 40, st: 'open', h: 40, who: [P.eve], dod: true, parent: 1 },
-      { name: 'Dashboards', s: 35, e: 55, st: 'open', who: [P.carol], dod: true },
-      { name: 'Platform GA', e: 60, ms: true, st: 'open' },
+      { name: 'Dashboards', s: 35, e: 55, st: 'open', who: [P.carol], dod: true, dep: [2] },
+      { name: 'Platform GA', e: 60, ms: true, st: 'open', dep: [4] },
     ],
   },
   {
     ref: { listId: 'demo-office', name: 'Office move', spaceName: 'Operations' },
     tasks: [
       { name: 'Pick location', s: -90, e: -60, st: 'done', h: 10, who: [P.eve], dod: true },
-      { name: 'Move day', e: -45, ms: true, st: 'done' },
+      { name: 'Move day', e: -45, ms: true, st: 'done', dep: [0] },
     ],
   },
 ]
@@ -243,6 +251,7 @@ export function demoProjects(today: Date): PortfolioProject[] {
         timeEstimate: d.h ? d.h * 3600000 : undefined,
         description: d.dod ? DOD : d.ms ? DOD : '',
         ...(d.parent !== undefined ? { parentId: `${p.ref.listId}-${d.parent}` } : {}),
+        ...(d.dep ? { dependencies: d.dep.map(i => `${p.ref.listId}-${i}`) } : {}),
       }
       return fromBoardTask(t, p.ref.listId)
     })),

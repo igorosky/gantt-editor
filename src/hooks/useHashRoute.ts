@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
-export type PortfolioTab = 'overview' | 'roadmap' | 'workload' | 'people'
+export type PortfolioTab = 'overview' | 'roadmap' | 'gantt' | 'workload' | 'people'
 
-export const PORTFOLIO_TABS: PortfolioTab[] = ['overview', 'roadmap', 'workload', 'people']
+export const PORTFOLIO_TABS: PortfolioTab[] = ['overview', 'roadmap', 'gantt', 'workload', 'people']
 
 export type Route =
   | { view: 'board' }

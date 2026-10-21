@@ -593,6 +593,23 @@ tbody .pf-heat__name {
 .pf-avatar--none { color: var(--text-muted); background: var(--surface-3); border-color: var(--border); }
 .pf-avatar--xs { width: 18px; height: 18px; font-size: 9px; }
 
+/* ------------------------------------------------------------------ gantt */
+
+/* The chart is the export SVG (light colours baked in), so its card stays white */
+.pf-gantt { display: flex; flex-direction: column; height: 100%; }
+.pf-gantt__hint { font-size: 12px; }
+.pf-gantt-card { flex: 1; min-height: 0; padding: 0; overflow: hidden; display: flex; margin-bottom: 0; background: #fff; }
+.pf-gantt-scroll { flex: 1; overflow: auto; }
+.pf-gantt-canvas { position: relative; }
+.pf-gantt-canvas svg { display: block; }
+/* Zero-height sticky copies of the date header and the names column; their
+   SVG overflows them, so they pin without taking up layout space */
+.pf-gantt-pin { position: sticky; height: 0; }
+.pf-gantt-pin--top { top: 0; z-index: 2; }
+.pf-gantt-pin--left { left: 0; z-index: 1; }
+.pf-gantt-pin--corner { top: 0; left: 0; z-index: 3; }
+.pf-gantt-pin--left svg { box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06); }
+
 /* ---------------------------------------------------------------- roadmap */
 
 .pf-roadmap { display: flex; flex-direction: column; height: 100%; }
