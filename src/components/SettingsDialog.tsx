@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import {
-  BACKLOG_AREAS, DEFAULT_SETTINGS, WEEKDAYS, cleanNames, normalizeSettings, weekOrder, workdayLabel,
+  BACKLOG_AREAS, DEFAULT_SETTINGS, WEEKDAYS, cleanNames, normalizeSettings, sameTag, weekOrder, workdayLabel,
   type BacklogArea, type Settings,
 } from '../lib/settings'
 
 interface Props {
   settings: Settings
   knownStatuses: string[] // status names seen on the board and in the portfolio
+  knownTags: string[] // tag names seen on the board and in the portfolio
   onSave: (next: Settings) => void
   onClose: () => void
 }
@@ -21,9 +22,11 @@ const AREA_LABEL: Record<BacklogArea, string> = {
 const pct = (share: number) => String(Math.round(share * 100))
 
 // Edits a draft; nothing applies until Save
-export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Props) {
+export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onClose }: Props) {
   const [warnings, setWarnings] = useState(settings.warnings)
   const [keywords, setKeywords] = useState(settings.warnings.dodKeywords.join(', '))
+  const [requiredTags, setRequiredTags] = useState(settings.warnings.requiredTags)
+  const [newTag, setNewTag] = useState('')
   const [weekStart, setWeekStart] = useState(settings.calendar.weekStart)
   const [workdays, setWorkdays] = useState(settings.calendar.workdays)
   const [statuses, setStatuses] = useState(settings.backlog.statuses)
@@ -37,11 +40,17 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
 
   const keywordList = cleanNames(keywords.split(','))
   const isBacklogName = (name: string) => statuses.some(s => s.toLowerCase() === name.toLowerCase())
+  const isRequiredTag = (name: string) => requiredTags.some(t => sameTag(t, name))
+  const noRequiredTags = warnings.missingTag && requiredTags.length === 0
 
   // Every status worth offering: the ones in use plus the ones already picked
   const candidates = useMemo(
     () => cleanNames([...statuses, ...knownStatuses]).sort((a, b) => a.localeCompare(b)),
     [statuses, knownStatuses],
+  )
+  const tagCandidates = useMemo(
+    () => cleanNames([...requiredTags, ...knownTags]).sort((a, b) => a.localeCompare(b)),
+    [requiredTags, knownTags],
   )
 
   function toggleStatus(name: string) {
@@ -56,6 +65,16 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
     setNewStatus('')
   }
 
+  function toggleTag(name: string) {
+    setRequiredTags(prev => (isRequiredTag(name) ? prev.filter(t => !sameTag(t, name)) : [...prev, name]))
+  }
+
+  function addTag() {
+    const name = newTag.trim()
+    if (name && !isRequiredTag(name)) setRequiredTags(prev => [...prev, name])
+    setNewTag('')
+  }
+
   function toggleWorkday(d: number) {
     setWorkdays(prev => {
       if (!prev.includes(d)) return [...prev, d].sort((a, b) => a - b)
@@ -67,6 +86,7 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
     const d = DEFAULT_SETTINGS
     setWarnings(d.warnings)
     setKeywords(d.warnings.dodKeywords.join(', '))
+    setRequiredTags(d.warnings.requiredTags)
     setWeekStart(d.calendar.weekStart)
     setWorkdays(d.calendar.workdays)
     setStatuses(d.backlog.statuses)
@@ -81,7 +101,7 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
   function save() {
     // Out-of-range or empty numbers fall back to their defaults
     onSave(normalizeSettings({
-      warnings: { ...warnings, dodKeywords: keywordList },
+      warnings: { ...warnings, dodKeywords: keywordList, requiredTags },
       calendar: { weekStart, workdays },
       backlog: { statuses, include },
       rules: {
@@ -94,7 +114,7 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
     }))
   }
 
-  const check = (key: 'emptyDescription' | 'missingDod' | 'missingPriority', label: string) => (
+  const check = (key: 'emptyDescription' | 'missingDod' | 'missingPriority' | 'missingTag', label: string) => (
     <label className="settings__check">
       <input
         type="checkbox"
@@ -134,6 +154,37 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
             </div>
           </div>
           {check('missingPriority', 'Missing priority')}
+          {check('missingTag', 'Missing a required tag')}
+          <div className="clickup-modal__row settings__indent">
+            <label>Required tags (any one counts)</label>
+            <div className="settings__chips" role="group" aria-label="Required tags">
+              {tagCandidates.map(name => (
+                <button
+                  key={name}
+                  type="button"
+                  className={`settings__chip${isRequiredTag(name) ? ' settings__chip--on' : ''}`}
+                  aria-pressed={isRequiredTag(name)}
+                  onClick={() => toggleTag(name)}
+                >
+                  {name}
+                </button>
+              ))}
+              {tagCandidates.length === 0 && <span className="clickup-modal__hint">No tags yet.</span>}
+            </div>
+            <div className="clickup-modal__token-row settings__add">
+              <input
+                value={newTag}
+                onChange={e => setNewTag(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addTag() }}
+                placeholder="Add a tag name"
+                aria-label="Add a required tag"
+              />
+              <button type="button" onClick={addTag} disabled={!newTag.trim()}>Add</button>
+            </div>
+            <div className="clickup-modal__hint">
+              A task needs at least one of the picked tags. Names are compared case-insensitively.
+            </div>
+          </div>
         </section>
 
         <section className="settings__section">
@@ -258,8 +309,10 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
             type="button"
             className="clickup-modal__save"
             onClick={save}
-            disabled={keywordList.length === 0}
-            title={keywordList.length === 0 ? 'Enter at least one DoD keyword' : undefined}
+            disabled={keywordList.length === 0 || noRequiredTags}
+            title={keywordList.length === 0
+              ? 'Enter at least one DoD keyword'
+              : noRequiredTags ? 'Pick at least one required tag' : undefined}
           >
             Save
           </button>

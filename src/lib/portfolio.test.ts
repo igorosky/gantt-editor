@@ -121,6 +121,11 @@ describe('projectHealth', () => {
     expect(projectHealth(tasks, TODAY, settings({ warnings: { missingDod: false } })).quality).toBe(0)
     expect(projectHealth(tasks, TODAY, settings({ warnings: { missingPriority: true } })).quality).toBe(1)
     expect(projectHealth(tasks, TODAY, settings({ warnings: { missingDod: false, missingPriority: true } })).quality).toBe(1)
+    // Tags stay on cached tasks, so the required tag check needs no precomputed id
+    const tagged = [dated({ warningIds: [], tags: [{ name: 'Backend' }] }), dated({ warningIds: [] })]
+    const req = settings({ warnings: { missingTag: true, requiredTags: ['backend'] } })
+    expect(projectHealth(tagged, TODAY).quality).toBe(0)
+    expect(projectHealth(tagged, TODAY, req).quality).toBe(1)
   })
 
   it('reports done and empty projects', () => {

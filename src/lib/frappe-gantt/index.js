@@ -1431,7 +1431,13 @@ export default class Gantt {
             }
         });
 
+        // Local fix: the drop is handled here rather than on the svg, so a
+        // release outside the chart also ends the drag (bar_being_dragged
+        // stayed set, and the host skipped its refreshes until the next
+        // mouseup inside). drag_end tells the host the drag is over: the
+        // dates went out frame by frame, so the drop itself changes nothing.
         document.addEventListener('mouseup', () => {
+            const was_active = action_in_progress();
             is_dragging = false;
             is_resizing_left = false;
             is_resizing_right = false;
@@ -1439,9 +1445,8 @@ export default class Gantt {
             this.$container
                 .querySelector('.visible')
                 ?.classList?.remove?.('visible');
-        });
+            if (!was_active) return;
 
-        $.on(this.$svg, 'mouseup', (e) => {
             this.bar_being_dragged = null;
             bars.forEach((bar) => {
                 const $bar = bar.$bar;
@@ -1449,8 +1454,8 @@ export default class Gantt {
                 bar.date_changed();
                 bar.set_action_completed();
             });
+            this.trigger_event('drag_end', []);
         });
-
     }
 
     // Fixed BFS: adds successors to 'out' only after computing next 'to_process',

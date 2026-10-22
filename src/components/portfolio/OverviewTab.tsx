@@ -68,6 +68,7 @@ function qualityTitle(s: Settings): string {
     w.emptyDescription && 'no description',
     w.missingDod && 'no Definition of Done',
     w.missingPriority && 'no priority',
+    w.missingTag && w.requiredTags.length > 0 && 'none of the required tags',
   ].filter(Boolean)
   return parts.length ? `Open tasks with ${parts.join(' or ')}` : 'All task warnings are off in Settings'
 }

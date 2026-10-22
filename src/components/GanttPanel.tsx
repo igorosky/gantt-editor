@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useReducer, useRef, useState } from 'react'
 import FrappeGantt from 'frappe-gantt'
 import type FrappeGanttNS from 'frappe-gantt'
 import type { CriticalScope, GanttTask } from '../types'
@@ -87,6 +87,9 @@ export function GanttPanel({
   })
   // Calendar the live chart was built or last re-rendered with
   const appliedCalendarRef = useRef('')
+  // A refresh skipped during a drag; the drop re-runs the effect through dropCount
+  const refreshPendingRef = useRef(false)
+  const [dropCount, bumpDropCount] = useReducer((n: number) => n + 1, 0)
 
   // Reports the column layout whenever it changes. Called after init / refresh
   // and on scroll, since infinite padding re-renders with extra columns from
@@ -252,12 +255,20 @@ export function GanttPanel({
     }
 
     if (ganttRef.current) {
-      // During an active drag bar_being_dragged is true — skip refresh to keep
-      // bar DOM elements intact. React state still updates so LHS stays live.
-      // The first render after mouseup (bar_being_dragged = null) does the refresh.
-      if ((ganttRef.current as any)?.bar_being_dragged) return
-
       const gantt = ganttRef.current as any
+      // From mousedown on a bar to the drop bar_being_dragged is false / true
+      // (null when idle). A refresh then would rebuild the bars under the
+      // pointer, so it waits for the drop (on_drag_end). frappe reports the
+      // dates on every drag frame, so the state is already current here: the
+      // subtask spans follow the drag in place, LHS stays live.
+      if (gantt.bar_being_dragged != null) {
+        refreshPendingRef.current = true
+        const spans = new Map((frappeTasks as any[]).map(t => [t.id, t._span]))
+        for (const bar of gantt.bars ?? []) bar.set_span(spans.get(bar.task.id) ?? null)
+        return
+      }
+      refreshPendingRef.current = false
+
       const gc = gantt.$container as HTMLElement | null
       const oldGanttStart = gantt.gantt_start ? new Date(gantt.gantt_start) : null
       const sl = gc?.scrollLeft ?? 0
@@ -337,6 +348,8 @@ export function GanttPanel({
           }
         },
         on_click: (task) => ganttClickRef.current(task),
+        // Fork event (not in @types/frappe-gantt): pointer released after a drag
+        ...{ on_drag_end: () => { if (refreshPendingRef.current) bumpDropCount() } },
       })
 
       const ganttContainer = (ganttRef.current as any)?.$container as HTMLElement | null
@@ -349,7 +362,7 @@ export function GanttPanel({
       applyCriticalArrows()
       emitGeometry()
     }
-  }, [tasks, allTasks, rows, criticalIds, criticalEdges]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Week start / working days changed in Settings: re-render the columns in
   // place (not through update_options, which would reset options such as

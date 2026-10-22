@@ -157,6 +157,17 @@ export default class Bar {
         this.span_offset = x - this.x;
     }
 
+    // Local addition: replaces the span without a refresh (null removes it),
+    // so a parent's bracket can follow a subtask while it is dragged.
+    set_span(span) {
+        const old = this.$span;
+        this.task._span = span;
+        this.$span = null;
+        if (span) this.draw_span();
+        if (old && this.$span) old.replaceWith(this.$span);
+        else old?.remove();
+    }
+
     draw_label() {
         let x_coord = this.x + this.$bar.getWidth() / 2;
 

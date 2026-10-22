@@ -44,6 +44,31 @@ describe('task warnings', () => {
     expect(ids(task({ status: 'to do' }), s)).toEqual(['empty-description', 'missing-priority'])
   })
 
+  it('requires one of the configured tags when switched on', () => {
+    const s = withWarnings({ missingDod: false, missingTag: true, requiredTags: ['Backend', 'Frontend'] })
+    expect(ids(task({ description: 'x' }))).toEqual(['missing-dod']) // off by default
+    expect(ids(task({ description: 'x' }), s)).toEqual(['missing-tag'])
+    expect(ids(task({ description: 'x', tags: [{ name: 'misc' }] }), s)).toEqual(['missing-tag'])
+    expect(ids(task({ description: 'x', tags: [{ name: 'misc' }, { name: 'frontend' }] }), s)).toEqual([])
+    expect(getTaskWarnings(task(), s).find(w => w.id === 'missing-tag')?.message)
+      .toBe('Task has none of the required tags: Backend, Frontend')
+  })
+
+  it('applies the tag rule to milestones and never with an empty tag list', () => {
+    const s = withWarnings({ missingDod: false, missingTag: true, requiredTags: ['Backend'] })
+    expect(ids(task({ type: 'milestone', description: 'x' }), s)).toEqual(['missing-tag'])
+    expect(ids(task({ description: 'x' }), withWarnings({ missingDod: false, missingTag: true }))).toEqual([])
+  })
+
+  it('skips the tag rule for backlog tasks when backlog is excluded from warnings', () => {
+    const s = withWarnings(
+      { missingDod: false, missingTag: true, requiredTags: ['Backend'] },
+      { ...DEFAULT_SETTINGS.backlog.include, warnings: false },
+    )
+    expect(ids(task({ status: 'backlog', description: 'x' }), s)).toEqual([])
+    expect(ids(task({ status: 'to do', description: 'x' }), s)).toEqual(['missing-tag'])
+  })
+
   it('applies the settings to precomputed content ids', () => {
     expect(contentWarningIds(task(), ['DoD'])).toEqual(['empty-description'])
     const t = task({ description: undefined })

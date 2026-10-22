@@ -29,6 +29,7 @@ describe('normalizeSettings', () => {
     expect(s.warnings).toEqual({
       emptyDescription: true, missingDod: true, missingPriority: true,
       dodKeywords: ['DoD', 'Kryteria ukończenia'],
+      missingTag: false, requiredTags: [],
     })
     expect(s.calendar).toEqual({ weekStart: 0, workdays: [0, 1, 2, 3, 4] })
     expect(s.backlog).toEqual({
@@ -41,6 +42,13 @@ describe('normalizeSettings', () => {
     const s = normalizeSettings({ warnings: { dodKeywords: ['  '] }, calendar: { workdays: [] } })
     expect(s.warnings.dodKeywords).toEqual(DEFAULT_SETTINGS.warnings.dodKeywords)
     expect(s.calendar.workdays).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('reads the required tags, cleaned', () => {
+    const w = normalizeSettings({ warnings: { missingTag: true, requiredTags: [' Backend ', 'backend', '', 'UX', 7] } }).warnings
+    expect(w.missingTag).toBe(true)
+    expect(w.requiredTags).toEqual(['Backend', 'UX'])
+    expect(normalizeSettings({ warnings: { requiredTags: 'Backend' } }).warnings.requiredTags).toEqual([])
   })
 
   it('accepts an empty backlog status list', () => {

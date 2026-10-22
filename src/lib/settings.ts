@@ -26,6 +26,9 @@ export interface Settings {
     missingPriority: boolean
     // Phrases the description must contain to count as having a DoD
     dodKeywords: string[]
+    missingTag: boolean
+    // Tags of which a task must carry at least one, compared case-insensitively
+    requiredTags: string[]
   }
   calendar: Calendar
   backlog: {
@@ -53,6 +56,8 @@ export const DEFAULT_SETTINGS: Settings = {
     missingDod: true,
     missingPriority: false,
     dodKeywords: DEFAULT_DOD_KEYWORDS,
+    missingTag: false,
+    requiredTags: [],
   },
   calendar: DEFAULT_CALENDAR,
   backlog: {
@@ -123,6 +128,8 @@ export function normalizeSettings(raw: unknown): Settings {
       missingDod: bool(w.missingDod, d.warnings.missingDod),
       missingPriority: bool(w.missingPriority, d.warnings.missingPriority),
       dodKeywords: keywords.length ? keywords : d.warnings.dodKeywords,
+      missingTag: bool(w.missingTag, d.warnings.missingTag),
+      requiredTags: cleanNames(w.requiredTags),
     },
     calendar: {
       weekStart,
@@ -150,11 +157,15 @@ export function normalizeSettings(raw: unknown): Settings {
   }
 }
 
-/* ------------------------------------------------------------ milestones */
+/* ------------------------------------------------------------------ tags */
 
 // ClickUp compares tag names without case
 export const sameTag = (a: string, b: string): boolean =>
   a.trim().toLowerCase() === b.trim().toLowerCase()
+
+// Whether the task carries at least one of the named tags
+export const hasAnyTag = (t: GanttTask, names: string[]): boolean =>
+  (t.tags ?? []).some(tag => names.some(name => sameTag(tag.name, name)))
 
 /* --------------------------------------------------------------- backlog */
 

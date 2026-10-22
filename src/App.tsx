@@ -157,6 +157,13 @@ export default function App() {
     for (const p of portfolio.projects) for (const t of p.tasks) if (t.status) names.add(t.status)
     return [...names]
   }, [tasks, portfolio.projects])
+  // Tag names offered as required tags in Settings
+  const knownTags = useMemo(() => {
+    const names = new Set<string>()
+    for (const t of tasks) for (const tag of t.tags ?? []) names.add(tag.name)
+    for (const p of portfolio.projects) for (const t of p.tasks) for (const tag of t.tags ?? []) names.add(tag.name)
+    return [...names]
+  }, [tasks, portfolio.projects])
   const [loadStripOn, setLoadStripOn] = useState(() => loadStripPrefs().on)
   const [loadMetric, setLoadMetric] = useState<WorkloadMetric>(() => loadStripPrefs().metric)
   const [ganttGeometry, setGanttGeometry] = useState<GanttGeometry | null>(null)
@@ -722,6 +729,7 @@ export default function App() {
         <SettingsDialog
           settings={settings}
           knownStatuses={knownStatuses}
+          knownTags={knownTags}
           onSave={next => { setSettings(next); setAppSettingsOpen(false) }}
           onClose={() => setAppSettingsOpen(false)}
         />
