@@ -2,13 +2,12 @@
 // drawn by the export renderer (exportGantt.buildGanttSvg). Pure. Task ids are
 // qualified with the project id, since ids are only unique within one list.
 
-import type { GanttTask } from '../types'
 import type { ExportRow } from './exportGantt'
 import type { PortfolioProject, PortfolioTask } from './portfolioData'
 import { computeCriticalPath, EMPTY_CRITICAL, type CriticalPath } from './criticalPath'
 import { isDone, projectHealth } from './portfolio'
 import { withoutBacklog, type Settings } from './settings'
-import { flattenTree } from './tree'
+import { flattenTree, sortByDate } from './tree'
 
 export type GanttOrder = 'start' | 'list'
 
@@ -34,8 +33,6 @@ function projectTasks(p: PortfolioProject, settings: Settings): PortfolioTask[] 
   }))
 }
 
-const startKey = (t: GanttTask): number => (t.start ?? t.end)?.getTime() ?? Infinity
-
 export function portfolioGanttRows(
   projects: PortfolioProject[], today: Date, settings: Settings, opts: PortfolioGanttOptions,
 ): { rows: ExportRow[]; depths: Map<string, number> } {
@@ -44,15 +41,8 @@ export function portfolioGanttRows(
 
   for (const p of projects) {
     const tasks = projectTasks(p, settings)
-    // Array order is sibling order, so sorting the array sorts every level.
-    // Stable: equal starts (and the undated, last) keep list order.
-    const ordered = opts.order === 'start'
-      ? [...tasks].sort((a, b) => {
-          const ka = startKey(a)
-          const kb = startKey(b)
-          return ka === kb ? 0 : ka - kb
-        })
-      : tasks
+    // Array order is sibling order, so sorting the array sorts every level
+    const ordered = opts.order === 'start' ? sortByDate(tasks, 'start') : tasks
     const kept = new Set<string>()
     for (const t of tasks) {
       if (!opts.includeDone && isDone(t)) continue

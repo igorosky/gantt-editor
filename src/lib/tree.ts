@@ -7,6 +7,7 @@
 // the task a root.
 
 import type { GanttTask } from '../types'
+import { startOfDay } from './dates'
 import { isDone } from './portfolio'
 
 export interface Tree<T extends GanttTask = GanttTask> {
@@ -244,6 +245,34 @@ export function canOutdent(tree: Tree, id: string): boolean {
 export function outdentTask<T extends GanttTask>(tasks: T[], id: string): T[] {
   const p = buildTree(tasks).parent.get(id)
   return p === undefined ? tasks : moveTask(tasks, id, p, 'after')
+}
+
+export type DateSortKey = 'start' | 'due'
+export type SortDir = 'asc' | 'desc'
+
+// Local day of a task's start or due date (a one-date task or milestone uses
+// that date for both), or null when it has no dates
+function sortDay(t: GanttTask, key: DateSortKey): number | null {
+  const d = key === 'start' ? t.start ?? t.end : t.end ?? t.start
+  return d ? startOfDay(d).getTime() : null
+}
+
+// Reorders by a date. Array order is sibling order, so every level ends up
+// sorted and each subtask stays under its parent. Compared by local day, so
+// times of day (frappe's 23:59:59 ends, ClickUp's 4 am) never decide; a tie
+// goes to the other date, then keeps the current order. Undated tasks last in
+// both directions. Returns `tasks` itself when nothing moves.
+export function sortByDate<T extends GanttTask>(tasks: T[], key: DateSortKey, dir: SortDir = 'asc'): T[] {
+  const other: DateSortKey = key === 'start' ? 'due' : 'start'
+  const sign = dir === 'asc' ? 1 : -1
+  const sorted = [...tasks].sort((a, b) => {
+    const ka = sortDay(a, key)
+    const kb = sortDay(b, key)
+    if (ka === null || kb === null) return ka === kb ? 0 : ka === null ? 1 : -1
+    if (ka !== kb) return sign * (ka - kb)
+    return sign * (sortDay(a, other)! - sortDay(b, other)!)
+  })
+  return sorted.every((t, i) => t === tasks[i]) ? tasks : sorted
 }
 
 export function removeSubtree<T extends GanttTask>(tasks: T[], id: string): T[] {

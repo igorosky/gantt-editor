@@ -1151,7 +1151,8 @@
   color: var(--critical);
 }
 
-.gantt-panel__load-btn {
+.gantt-panel__load-btn,
+.gantt-panel__sort-btn {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1167,10 +1168,17 @@
 }
 
 .gantt-panel__load-btn:hover,
-.gantt-panel__load-btn--active {
+.gantt-panel__load-btn--active,
+.gantt-panel__sort-btn:hover:not(:disabled),
+.gantt-panel__sort-btn--active {
   border-color: var(--accent);
   color: var(--accent-strong);
   background: var(--accent-soft);
+}
+
+.gantt-panel__sort-btn:disabled {
+  color: #aaa;
+  cursor: not-allowed;
 }
 
 /* Workload strip under the board (see WorkloadStrip.tsx) */

@@ -4,7 +4,7 @@ import type { RemoteTask } from '../lib/clickup'
 import { prunePending, recordDeletion, restoreDeletion } from '../lib/deletions'
 import {
   indentTask as indentIn, moveTask as moveIn, outdentTask as outdentIn,
-  removeSubtree, setParent, type DropPosition,
+  removeSubtree, setParent, sortByDate, type DateSortKey, type DropPosition, type SortDir,
 } from '../lib/tree'
 
 const STORAGE_KEY = 'gantt-tasks'
@@ -145,6 +145,11 @@ export function useTasks() {
     setTasks(prev => moveIn(prev, id, targetId, pos))
   }
 
+  // Rewrites the saved order, every sibling level sorted by the date
+  function sortTasks(key: DateSortKey, dir: SortDir) {
+    setTasks(prev => sortByDate(prev, key, dir))
+  }
+
   function setTaskParent(id: string, parentId: string | undefined) {
     setTasks(prev => setParent(prev, id, parentId))
   }
@@ -165,7 +170,7 @@ export function useTasks() {
 
   return {
     tasks, setTasks, addTask, commitTask, removeTask, updateTask,
-    moveTask, setTaskParent, indentTask, outdentTask, clearTasks,
+    moveTask, sortTasks, setTaskParent, indentTask, outdentTask, clearTasks,
     pending, restorePending, dropPending, prunePendingFor,
   }
 }

@@ -78,7 +78,7 @@ function loadCollapsed(): Set<string> {
 
 export default function App() {
   const {
-    tasks, setTasks, commitTask, removeTask, updateTask, moveTask, setTaskParent,
+    tasks, setTasks, commitTask, removeTask, updateTask, moveTask, sortTasks, setTaskParent,
     indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor,
   } = useTasks()
   const { config, setConfig } = useClickUpConfig()
@@ -544,6 +544,7 @@ export default function App() {
             onDateChange={(id, start, end) => updateTask(id, { start, end })}
             onContainerReady={handleContainerReady}
             onToggleDependency={handleToggleDependency}
+            onSort={sortTasks}
             focusIdRef={lhsFocusIdRef}
             criticalIds={critical.taskIds}
             criticalEdges={critical.edges}

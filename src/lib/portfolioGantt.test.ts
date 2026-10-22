@@ -71,17 +71,19 @@ describe('portfolioGanttRows', () => {
     expect(shape(run([p], { includeDateless: false }).rows)).toEqual(['#A', 'A:a', 'A:m'])
   })
 
-  it('orders siblings by start date, undated last, ties in list order', () => {
+  it('orders siblings by start date, undated last, ties by due date then list order', () => {
     const p = project('A', [
       task('late', { start: day(9), end: day(10) }),
       task('none', { start: undefined, end: undefined }),
       task('early', { start: day(1), end: day(3) }),
       task('dueOnly', { start: undefined, end: day(5) }),
       task('early2', { start: day(1), end: day(2) }),
+      task('early3', { start: day(1), end: day(2) }),
     ])
     expect(shape(run([p], { order: 'start' }).rows))
-      .toEqual(['#A', 'A:early', 'A:early2', 'A:dueOnly', 'A:late', 'A:none'])
-    expect(shape(run([p]).rows)).toEqual(['#A', 'A:late', 'A:none', 'A:early', 'A:dueOnly', 'A:early2'])
+      .toEqual(['#A', 'A:early2', 'A:early3', 'A:early', 'A:dueOnly', 'A:late', 'A:none'])
+    expect(shape(run([p]).rows))
+      .toEqual(['#A', 'A:late', 'A:none', 'A:early', 'A:dueOnly', 'A:early2', 'A:early3'])
   })
 
   it('folds a collapsed project to its header, keeping the count', () => {
