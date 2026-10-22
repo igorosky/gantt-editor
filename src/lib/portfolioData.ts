@@ -14,6 +14,7 @@ export interface ProjectRef {
   name: string
   folderName?: string
   spaceName?: string
+  spaceId?: string // absent on picks saved before boards could be opened from here
 }
 
 // parentName: the parent's name, for context next to generic subtask names

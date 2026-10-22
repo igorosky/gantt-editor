@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useTasks } from './hooks/useTasks'
+import { loadPending, loadTasks, useTasks } from './hooks/useTasks'
 import { useClickUpConfig } from './hooks/useClickUpConfig'
+import { useBoards } from './hooks/useBoards'
+import { useWorkspaceTree } from './hooks/useWorkspaceTree'
 import { TaskPanel } from './components/TaskPanel'
 import { GanttPanel } from './components/GanttPanel'
 import { Divider } from './components/Divider'
 import { ClickUpSettings } from './components/ClickUpSettings'
+import { BoardSwitcher, LinkBoardDialog } from './components/BoardSwitcher'
 import { SettingsDialog } from './components/SettingsDialog'
 import { TaskDetailPopup } from './components/TaskDetailPopup'
 import { ExportDialog } from './components/ExportDialog'
@@ -27,6 +30,8 @@ import { pendingCuids, planDeletions, type DeletionCandidate } from './lib/delet
 import { findConflicts, resolveConflicts, type Resolution, type SyncConflict } from './lib/conflicts'
 import { getAllTasks, type RemoteTask } from './lib/clickup'
 import { runFailed, runSummary } from './lib/syncLog'
+import { boardPatchFromRemote, boardSummary } from './lib/boards'
+import type { ProjectRef } from './lib/portfolioData'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
 import { buildTree, descendants, flattenTree } from './lib/tree'
 import { daysBetween, shiftDays } from './lib/dates'
@@ -77,11 +82,15 @@ function loadCollapsed(): Set<string> {
 }
 
 export default function App() {
+  const boards = useBoards()
+  const board = boards.current
   const {
     tasks, setTasks, commitTask, removeTask, updateTask, moveTask, sortTasks, setTaskParent,
-    indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor,
-  } = useTasks()
-  const { config, setConfig } = useClickUpConfig()
+    indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor, storageFull,
+  } = useTasks(board.id)
+  const { config, setConfig, clearConfig } = useClickUpConfig()
+  const workspace = useWorkspaceTree(config?.token, config?.teamId)
+  const [linkOpen, setLinkOpen] = useState(false)
   const { settings, setSettings } = useSettings()
   const [appSettingsOpen, setAppSettingsOpen] = useState(false)
   const [leftPct, setLeftPct] = useState(DEFAULT_PCT)
@@ -104,7 +113,7 @@ export default function App() {
   } | null>(null)
   const [syncLogOpen, setSyncLogOpen] = useState(false)
   const [pendingOpen, setPendingOpen] = useState(false)
-  const syncLog = useSyncLog()
+  const syncLog = useSyncLog(board.id)
   const [filters, setFilters] = useState<Filter[]>([])
   const [matchMode, setMatchMode] = useState<'all' | 'any'>('all')
   // Backlog tasks can be left off the board (Settings); pull / push still see them
@@ -136,7 +145,7 @@ export default function App() {
     [criticalOn, criticalScope, tasks, filteredTasks],
   )
   const [route, navigate] = useHashRoute()
-  const portfolio = usePortfolio(tasks, config, settings.warnings.dodKeywords)
+  const portfolio = usePortfolio(tasks, config, board.listId, settings.warnings.dodKeywords)
   // Status names offered as backlog candidates in Settings
   const knownStatuses = useMemo(() => {
     const names = new Set<string>()
@@ -206,7 +215,7 @@ export default function App() {
     resolution?: { conflicts: SyncConflict[]; picks: Map<string, Resolution> },
     deletions?: DeletionDecision[],
   ) => {
-    if (!config?.token || !config.listId) return
+    if (!config?.token || !board.listId) return
     setSyncBusy(direction)
     const t0 = performance.now()
     try {
@@ -221,7 +230,9 @@ export default function App() {
         entries = res.entries
         clock = latestUpdate(remote)
       } else {
-        const res = await pushToClickUp(config, tasksRef.current, remote, resolved?.overrides, deletions)
+        const res = await pushToClickUp(
+          { token: config.token, listId: board.listId }, tasksRef.current, remote, resolved?.overrides, deletions,
+        )
         // Patch by id, so edits made while the push ran survive
         setTasks(prev => prev.map(t => {
           const p = res.patches.get(t.id)
@@ -232,7 +243,10 @@ export default function App() {
         clock = res.latestUpdate
       }
       if (resolved) entries = [...resolved.log, ...entries]
-      setConfig({ ...config, lastSyncAt: new Date(Math.max(Date.now(), clock)).toISOString() })
+      boards.patch(board.id, {
+        ...boardPatchFromRemote(board, remote),
+        lastSyncAt: new Date(Math.max(Date.now(), clock)).toISOString(),
+      })
       syncLog.addRun({ direction, at: startedAt, durationMs: fetchMs + performance.now() - t0, entries })
     } catch (e) {
       syncLog.addRun({
@@ -242,19 +256,19 @@ export default function App() {
     } finally {
       setSyncBusy(null)
     }
-  }, [config, setTasks, setConfig, syncLog.addRun, dropPending])
+  }, [config, board, boards.patch, setTasks, syncLog.addRun, dropPending])
 
   // Fetches the list, then applies straight away unless the operation would
   // overwrite changes made on the other side, which the user resolves first,
   // or a push would delete tasks deleted on the board, which the user confirms
   const startSync = useCallback(async (direction: SyncDirection) => {
-    if (!config?.token || !config.listId || syncBusy) return
+    if (!config?.token || !board.listId || syncBusy) return
     setSyncBusy(direction)
     const startedAt = new Date().toISOString()
     const t0 = performance.now()
     let remote: RemoteTask[]
     try {
-      remote = await getAllTasks(config.token, config.listId)
+      remote = await getAllTasks(config.token, board.listId)
     } catch (e) {
       syncLog.addRun({
         direction, at: startedAt, durationMs: performance.now() - t0, entries: [],
@@ -265,7 +279,7 @@ export default function App() {
     }
     const fetchMs = performance.now() - t0
     prunePendingFor(remote)
-    const lastSyncMs = config.lastSyncAt ? Date.parse(config.lastSyncAt) : 0
+    const lastSyncMs = board.lastSyncAt ? Date.parse(board.lastSyncAt) : 0
     const conflicts = findConflicts(direction, tasksRef.current, remote, lastSyncMs)
     const deletions = direction === 'push' ? planDeletions(pendingRef.current, tasksRef.current, remote) : []
     if (conflicts.length || deletions.length) {
@@ -277,7 +291,73 @@ export default function App() {
       return
     }
     await applySync(direction, remote, startedAt, fetchMs)
-  }, [config, syncBusy, applySync, syncLog.addRun, prunePendingFor])
+  }, [config, board, syncBusy, applySync, syncLog.addRun, prunePendingFor])
+
+  // A list opened for the first time (linked, never synced, no tasks) pulls
+  // straight away; a failed first pull tries again on the next visit
+  const autoPulledRef = useRef<string | null>(null)
+  useEffect(() => {
+    const firstOpen = !!config?.token && !!board.listId && !board.lastSyncAt && tasksRef.current.length === 0
+    if (!firstOpen) {
+      autoPulledRef.current = null
+      return
+    }
+    if (autoPulledRef.current === board.id) return
+    autoPulledRef.current = board.id
+    void startSync('pull')
+  }, [board.id, board.listId, config?.token]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Switching is off while a pull / push runs or waits for a dialog: its
+  // results are applied to the board shown
+  const switchBlocked = syncBusy
+    ? 'Wait for the pull / push to finish'
+    : pendingSync ? 'Finish or cancel the pull / push first' : undefined
+
+  const leaveBoard = useCallback(() => {
+    setDetailTaskId(null)
+    setNewTaskDraft(null)
+  }, [])
+
+  const switchBoard = useCallback((id: string) => {
+    if (switchBlocked) return
+    leaveBoard()
+    boards.switchTo(id)
+  }, [switchBlocked, leaveBoard, boards.switchTo])
+
+  const openListBoard = useCallback((ref: ProjectRef) => {
+    if (switchBlocked) return
+    leaveBoard()
+    boards.openList(ref)
+  }, [switchBlocked, leaveBoard, boards.openList])
+
+  const newLocalBoard = useCallback(() => {
+    if (switchBlocked) return
+    leaveBoard()
+    boards.newLocal()
+  }, [switchBlocked, leaveBoard, boards.newLocal])
+
+  const renameBoard = useCallback((id: string) => {
+    const b = boards.boards.find(x => x.id === id)
+    if (!b) return
+    const name = prompt('Board name', b.name)
+    if (name !== null) boards.rename(id, name)
+  }, [boards.boards, boards.rename])
+
+  // Only this browser's copy goes; say what nothing else holds
+  const removeBoard = useCallback((id: string) => {
+    const b = boards.boards.find(x => x.id === id)
+    if (!b) return
+    const s = boardSummary(loadTasks(id), loadPending(id))
+    const lost: string[] = []
+    if (s.boardOnly) lost.push(`${s.boardOnly} task${s.boardOnly === 1 ? '' : 's'} that ${s.boardOnly === 1 ? 'is' : 'are'} not in ClickUp`)
+    if (s.pending) lost.push(`${s.pending} pending deletion${s.pending === 1 ? '' : 's'}`)
+    const msg = [
+      `Remove "${b.name}" from this browser?`,
+      b.listId ? 'The ClickUp list is not touched, but edits not pushed yet are lost. Opening the list again pulls it fresh.' : '',
+      lost.length ? `Lost for good: ${lost.join(', ')}.` : '',
+    ].filter(Boolean).join('\n\n')
+    if (confirm(msg)) boards.remove(id)
+  }, [boards.boards, boards.remove])
 
   const handleResize = useCallback((deltaX: number) => {
     const containerWidth = containerRef.current?.offsetWidth ?? window.innerWidth
@@ -403,7 +483,11 @@ export default function App() {
   }, [])
 
   const lastRun = syncLog.runs[0]
-  const clickUpReady = !!config?.token && !!config.listId
+  const clickUpReady = !!config?.token && !!board.listId
+  const statusSource = useMemo(
+    () => (config?.token && board.listId ? { token: config.token, listId: board.listId } : undefined),
+    [config?.token, board.listId],
+  )
 
   return (
     <div className="app">
@@ -430,6 +514,22 @@ export default function App() {
             Portfolio
           </button>
         </div>
+        {route.view === 'board' && (
+          <BoardSwitcher
+            boards={boards.boards}
+            current={board}
+            connected={!!config?.token && !!config.teamId}
+            workspace={workspace}
+            blocked={switchBlocked}
+            onSwitch={switchBoard}
+            onOpenList={openListBoard}
+            onNewLocal={newLocalBoard}
+            onRename={renameBoard}
+            onRemove={removeBoard}
+            onLink={() => setLinkOpen(true)}
+            onConnect={() => setSettingsOpen(true)}
+          />
+        )}
         <div className="app__header-spacer" />
         {clickUpReady && lastRun && (
           <button
@@ -501,12 +601,22 @@ export default function App() {
           pf={portfolio}
           tab={route.tab}
           onTab={tab => navigate({ view: 'portfolio', tab })}
-          onOpenBoard={() => navigate({ view: 'board' })}
+          onOpenBoard={ref => {
+            if (ref) openListBoard(ref)
+            navigate({ view: 'board' })
+          }}
           onOpenSettings={() => setSettingsOpen(true)}
           cu={config}
+          workspace={workspace}
           settings={settings}
         />
       ) : (<>
+      {storageFull && (
+        <div className="app__storage-warn" role="alert">
+          Browser storage is full, so changes to this board are not saved. Remove boards you no longer
+          need from the board switcher, or projects from the portfolio.
+        </div>
+      )}
       <div className="app__body" ref={containerRef}>
         <div className="app__panel app__panel--left" style={{ width: `${leftPct}%` }}>
           <TaskPanel
@@ -534,6 +644,7 @@ export default function App() {
             listRef={taskListRef}
             criticalIds={critical.taskIds}
             settings={settings}
+            statusSource={statusSource}
           />
         </div>
         <Divider onResize={handleResize} />
@@ -578,8 +689,24 @@ export default function App() {
           setConfig(next)
           setSettingsOpen(false)
         }}
+        onDisconnect={() => {
+          clearConfig()
+          setSettingsOpen(false)
+        }}
         onClose={() => setSettingsOpen(false)}
       />
+      {linkOpen && config && (
+        <LinkBoardDialog
+          board={board}
+          boards={boards.boards}
+          workspace={workspace}
+          onLink={ref => {
+            boards.link(board.id, ref)
+            setLinkOpen(false)
+          }}
+          onClose={() => setLinkOpen(false)}
+        />
+      )}
       {appSettingsOpen && (
         <SettingsDialog
           settings={settings}
@@ -656,8 +783,8 @@ export default function App() {
             onAddSubtask={() => handleAddSubtask(detailTaskId)}
             clickupToken={config?.token}
             clickupTeamId={config?.teamId}
-            clickupListId={config?.listId}
-            clickupSpaceId={config?.spaceId}
+            clickupListId={board.listId}
+            clickupSpaceId={board.spaceId}
           />
         ) : null
       })()}
@@ -672,8 +799,8 @@ export default function App() {
           isCreateMode
           clickupToken={config?.token}
           clickupTeamId={config?.teamId}
-          clickupListId={config?.listId}
-          clickupSpaceId={config?.spaceId}
+          clickupListId={board.listId}
+          clickupSpaceId={board.spaceId}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import type { ClickUpConfig, GanttTask, SyncBase, SyncFieldChange, SyncLogEntry } from '../types'
+import type { GanttTask, SyncBase, SyncFieldChange, SyncLogEntry } from '../types'
 import { buildTree, ancestors, TOP_LEVEL_BLOCKED } from './tree'
 import { fmtDate } from './dates'
 import { clipText } from './syncLog'
@@ -487,7 +487,7 @@ export interface DeletionDecision {
 // end up with the decided values. Tasks deleted on the board are deleted in
 // ClickUp last, and only those the user confirmed (`deletions`).
 export async function pushToClickUp(
-  config: Pick<ClickUpConfig, 'token' | 'listId'>,
+  config: { token: string; listId: string },
   boardTasks: GanttTask[],
   remote: RemoteTask[],
   overrides?: Overrides,

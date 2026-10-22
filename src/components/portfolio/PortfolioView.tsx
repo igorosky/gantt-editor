@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ClickUpConfig } from '../../types'
 import type { PortfolioState } from '../../hooks/usePortfolio'
+import type { WorkspaceTree } from '../../hooks/useWorkspaceTree'
+import type { ProjectRef } from '../../lib/portfolioData'
 import type { PortfolioTab } from '../../hooks/useHashRoute'
 import { OverviewTab } from './OverviewTab'
 import { RoadmapTab } from './RoadmapTab'
@@ -9,15 +11,18 @@ import { WorkloadTab } from './WorkloadTab'
 import { PeopleTab } from './PeopleTab'
 import { ProjectPicker } from './ProjectPicker'
 import type { Settings } from '../../lib/settings'
+import { timeAgo } from '../../lib/dates'
 import './Portfolio.css'
 
 interface Props {
   pf: PortfolioState
   tab: PortfolioTab
   onTab: (tab: PortfolioTab) => void
-  onOpenBoard: () => void
+  // Shows a project as the board; no ref = the current board
+  onOpenBoard: (ref?: ProjectRef) => void
   onOpenSettings: () => void
   cu: ClickUpConfig | null
+  workspace: WorkspaceTree
   settings: Settings
 }
 
@@ -29,17 +34,7 @@ const TABS: Array<[PortfolioTab, string]> = [
   ['people', 'People'],
 ]
 
-function ago(iso: string | undefined, now: number): string {
-  if (!iso) return 'never'
-  const min = Math.round((now - Date.parse(iso)) / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min} min ago`
-  const h = Math.round(min / 60)
-  if (h < 48) return `${h} h ago`
-  return `${Math.round(h / 24)} days ago`
-}
-
-export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu, settings }: Props) {
+export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu, workspace, settings }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   // Fixed for the session so every chart agrees on what "today" is
   const [today] = useState(() => new Date())
@@ -78,7 +73,7 @@ export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu,
           <>
             {canFetch && (
               <span className="pf-stamp" title={oldest ? `Oldest data fetched ${new Date(oldest).toLocaleString()}` : undefined}>
-                {progress ? `Fetching ${progress.done}/${progress.total}…` : fetched.length ? `Fetched ${ago(oldest, now)}` : ''}
+                {progress ? `Fetching ${progress.done}/${progress.total}…` : fetched.length ? `Fetched ${timeAgo(oldest, now)}` : ''}
               </span>
             )}
             <button type="button" className="pf-btn" disabled={!canFetch || !!progress || pf.refs.length === 0}
@@ -146,8 +141,7 @@ export function PortfolioView({ pf, tab, onTab, onOpenBoard, onOpenSettings, cu,
 
       {pickerOpen && cu?.token && cu.teamId && (
         <ProjectPicker
-          token={cu.token}
-          teamId={cu.teamId}
+          workspace={workspace}
           boardListId={pf.boardListId}
           refs={pf.refs}
           onSave={refs => { pf.setRefs(refs); setPickerOpen(false) }}

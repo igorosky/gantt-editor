@@ -1,24 +1,31 @@
 import { useState, useEffect } from 'react'
 import type { ClickUpConfig } from '../types'
-
-const STORAGE_KEY = 'clickup-config'
+import { CONFIG_KEY, ensureMigrated, normalizeConfig } from '../lib/boards'
 
 function loadFromStorage(): ClickUpConfig | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as ClickUpConfig
+    // The config from before boards also held the board's list
+    ensureMigrated(localStorage)
+  } catch { /* storage full: the old shape still reads as a connection */ }
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY)
+    if (raw) return normalizeConfig(JSON.parse(raw))
   } catch {
     // corrupted — ignore
   }
   return null
 }
 
+// The ClickUp connection (token + workspace). Which list a board uses lives
+// on the board (useBoards).
 export function useClickUpConfig() {
   const [config, setConfigState] = useState<ClickUpConfig | null>(loadFromStorage)
 
   useEffect(() => {
-    if (config) localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
-    else localStorage.removeItem(STORAGE_KEY)
+    try {
+      if (config) localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+      else localStorage.removeItem(CONFIG_KEY)
+    } catch { /* quota */ }
   }, [config])
 
   function setConfig(next: ClickUpConfig) {

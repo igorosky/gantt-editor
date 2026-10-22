@@ -2,155 +2,63 @@
 // Acceptable for personal-tool use. To harden, move to HttpOnly cookie + backend.
 
 import { useEffect, useState } from 'react'
-import {
-  ClickUpError,
-  listFolders,
-  listFolderlessLists,
-  listLists,
-  listSpaces,
-  listTeams,
-  type Folder,
-  type List,
-  type Space,
-  type Team,
-} from '../lib/clickup'
+import { ClickUpError, listTeams, type Team } from '../lib/clickup'
 import type { ClickUpConfig } from '../types'
-
-const FOLDERLESS = 'folderless' as const
 
 interface Props {
   open: boolean
   config: ClickUpConfig | null
   onSave: (next: ClickUpConfig) => void
+  onDisconnect: () => void
   onClose: () => void
 }
 
-export function ClickUpSettings({ open, config, onSave, onClose }: Props) {
+// The connection only: token + workspace. Boards pick their list in the board
+// switcher, the portfolio its lists under Projects.
+export function ClickUpSettings({ open, config, onSave, onDisconnect, onClose }: Props) {
   const [token, setToken] = useState('')
   const [teamId, setTeamId] = useState('')
-  const [spaceId, setSpaceId] = useState('')
-  const [folder, setFolder] = useState<string | typeof FOLDERLESS>('')
-  const [listId, setListId] = useState('')
-
   const [teams, setTeams] = useState<Team[]>([])
-  const [spaces, setSpaces] = useState<Space[]>([])
-  const [folders, setFolders] = useState<Folder[]>([])
-  const [folderlessLists, setFolderlessLists] = useState<List[]>([])
-  const [lists, setLists] = useState<List[]>([])
-
-  const [loading, setLoading] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!open) return
-    setToken(config?.token ?? '')
-    setTeamId(config?.teamId ?? '')
-    setSpaceId(config?.spaceId ?? '')
-    setFolder(config?.folder ?? '')
-    setListId(config?.listId ?? '')
-    setTeams([])
-    setSpaces([])
-    setFolders([])
-    setFolderlessLists([])
-    setLists([])
-    setError(null)
-    setLoading(null)
-  }, [open, config])
-
-  function handleError(label: string, e: unknown) {
-    if (e instanceof ClickUpError) {
-      setError(`${label}: ${e.message} (${e.status})`)
-    } else {
-      setError(`${label}: ${String(e)}`)
-    }
-  }
-
-  async function loadTeams() {
-    if (!token.trim()) {
+  async function loadTeams(tok: string) {
+    if (!tok.trim()) {
       setError('Token is required')
       return
     }
     setError(null)
-    setLoading('teams')
+    setLoading(true)
     try {
-      const t = await listTeams(token.trim())
+      const t = await listTeams(tok.trim())
       setTeams(t)
-      if (t.length === 1 && !teamId) setTeamId(t[0].id)
+      setTeamId(prev => (t.some(x => x.id === prev) ? prev : t.length === 1 ? t[0].id : ''))
     } catch (e) {
-      handleError('Load teams', e)
+      setTeams([])
+      setError(e instanceof ClickUpError ? `Load workspaces: ${e.message} (${e.status})` : `Load workspaces: ${String(e)}`)
     } finally {
-      setLoading(null)
+      setLoading(false)
     }
   }
 
+  // A saved token loads its workspaces straight away
   useEffect(() => {
-    if (!teamId) return
-    setSpaces([])
-    setFolders([])
-    setFolderlessLists([])
-    setLists([])
-    setLoading('spaces')
+    if (!open) return
+    setToken(config?.token ?? '')
+    setTeamId(config?.teamId ?? '')
+    setTeams([])
     setError(null)
-    listSpaces(token.trim(), teamId)
-      .then(setSpaces)
-      .catch(e => handleError('Load spaces', e))
-      .finally(() => setLoading(null))
-  }, [teamId, token])
-
-  useEffect(() => {
-    if (!spaceId) return
-    setFolders([])
-    setFolderlessLists([])
-    setLists([])
-    setLoading('folders')
-    setError(null)
-    Promise.all([
-      listFolders(token.trim(), spaceId),
-      listFolderlessLists(token.trim(), spaceId),
-    ])
-      .then(([f, fl]) => {
-        setFolders(f)
-        setFolderlessLists(fl)
-      })
-      .catch(e => handleError('Load folders', e))
-      .finally(() => setLoading(null))
-  }, [spaceId, token])
-
-  useEffect(() => {
-    if (!folder) return
-    if (folder === FOLDERLESS) {
-      setLists(folderlessLists)
-      return
-    }
-    setLists([])
-    setLoading('lists')
-    setError(null)
-    listLists(token.trim(), folder)
-      .then(setLists)
-      .catch(e => handleError('Load lists', e))
-      .finally(() => setLoading(null))
-  }, [folder, folderlessLists, token])
+    if (config?.token) void loadTeams(config.token)
+  }, [open, config]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null
 
-  const canSave = !!(token.trim() && teamId && spaceId && folder && listId)
-
-  function handleSave() {
-    if (!canSave) return
-    onSave({
-      token: token.trim(),
-      teamId,
-      spaceId,
-      folder: folder as string | typeof FOLDERLESS,
-      listId,
-      lastSyncAt: config?.lastSyncAt,
-    })
-  }
+  const canSave = !!(token.trim() && teamId && teams.some(t => t.id === teamId))
 
   return (
     <div className="clickup-modal-overlay" onClick={onClose}>
       <div className="clickup-modal" onClick={e => e.stopPropagation()}>
-        <h2 className="clickup-modal__title">ClickUp Integration</h2>
+        <h2 className="clickup-modal__title">ClickUp connection</h2>
 
         <div className="clickup-modal__row">
           <label htmlFor="cu-token">Personal API Token</label>
@@ -161,10 +69,14 @@ export function ClickUpSettings({ open, config, onSave, onClose }: Props) {
               autoComplete="off"
               placeholder="pk_..."
               value={token}
-              onChange={e => setToken(e.target.value)}
+              onChange={e => {
+                setToken(e.target.value)
+                setTeams([])
+              }}
+              onKeyDown={e => { if (e.key === 'Enter') void loadTeams(token) }}
             />
-            <button type="button" onClick={loadTeams} disabled={loading === 'teams'}>
-              {loading === 'teams' ? 'Loading…' : 'Load'}
+            <button type="button" onClick={() => void loadTeams(token)} disabled={loading}>
+              {loading ? 'Loading…' : 'Load'}
             </button>
           </div>
           <div className="clickup-modal__hint">
@@ -177,91 +89,44 @@ export function ClickUpSettings({ open, config, onSave, onClose }: Props) {
           <select
             id="cu-team"
             value={teamId}
-            onChange={e => {
-              setTeamId(e.target.value)
-              setSpaceId('')
-              setFolder('')
-              setListId('')
-            }}
+            onChange={e => setTeamId(e.target.value)}
             disabled={teams.length === 0}
           >
-            <option value="">{teams.length ? '— select —' : '(load teams first)'}</option>
+            <option value="">{teams.length ? '— select —' : '(load workspaces first)'}</option>
             {teams.map(t => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
           </select>
-        </div>
-
-        <div className="clickup-modal__row">
-          <label htmlFor="cu-space">Space</label>
-          <select
-            id="cu-space"
-            value={spaceId}
-            onChange={e => {
-              setSpaceId(e.target.value)
-              setFolder('')
-              setListId('')
-            }}
-            disabled={spaces.length === 0}
-          >
-            <option value="">{spaces.length ? '— select —' : '(pick a workspace)'}</option>
-            {spaces.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="clickup-modal__row">
-          <label htmlFor="cu-folder">Folder</label>
-          <select
-            id="cu-folder"
-            value={folder}
-            onChange={e => {
-              setFolder(e.target.value)
-              setListId('')
-            }}
-            disabled={folders.length === 0 && folderlessLists.length === 0}
-          >
-            <option value="">— select —</option>
-            {folderlessLists.length > 0 && (
-              <option value={FOLDERLESS}>(folderless lists)</option>
-            )}
-            {folders.map(f => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="clickup-modal__row">
-          <label htmlFor="cu-list">List</label>
-          <select
-            id="cu-list"
-            value={listId}
-            onChange={e => setListId(e.target.value)}
-            disabled={lists.length === 0}
-          >
-            <option value="">{lists.length ? '— select —' : '(pick a folder)'}</option>
-            {lists.map(l => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+          <div className="clickup-modal__hint">
+            Open a ClickUp list as a board from the board switcher next to Board / Portfolio.
+            The portfolio picks its lists under Portfolio → Projects.
+          </div>
         </div>
 
         {error && <div className="clickup-modal__error">{error}</div>}
 
         <div className="clickup-modal__actions">
+          {config && (
+            <button
+              type="button"
+              className="clickup-modal__disconnect"
+              title="Forget the token. Boards and their tasks stay in this browser."
+              onClick={onDisconnect}
+            >
+              Disconnect
+            </button>
+          )}
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" onClick={handleSave} disabled={!canSave} className="clickup-modal__save">
+          <button
+            type="button"
+            onClick={() => canSave && onSave({ token: token.trim(), teamId })}
+            disabled={!canSave}
+            className="clickup-modal__save"
+          >
             Save
           </button>
         </div>

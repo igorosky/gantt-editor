@@ -63,11 +63,11 @@ docker run --rm -v $(pwd):/work node:20-alpine sh -c "cd /work && npm test"
 
 ## ClickUp integration
 
-Sync is optional and configured entirely from the app UI (the "ClickUp" button in the header):
+Sync is optional and configured entirely from the app UI:
 
-1. Enter a personal ClickUp API token.
-2. Pick a Workspace, then a Space, then a Folder (or "folderless"), then a List.
-3. Use "↓ Pull" to copy that ClickUp list onto the board (ClickUp wins, nothing is written to ClickUp) and "↑ Push" to copy the board onto ClickUp (the board wins). If either would overwrite changes made on the other side, it first lists each conflict (field, parent or dependency) and lets you keep the board value, take ClickUp's, merge both (tags, assignees) or write your own (name, description). Pull still writes nothing to ClickUp: values you keep on the board go with the next Push.
+1. "ClickUp" in the header: enter a personal ClickUp API token, press Load and pick the Workspace. That is the whole connection; the portfolio works with just this.
+2. Open a list as a board from the board switcher next to `Board | Portfolio`: it lists the boards kept in this browser and every list of the workspace (with search). A list opened for the first time is pulled straight away; each board keeps its own local copy (tasks, pending deletions, sync log), so switching back is instant and unpushed edits stay. "+ New local board" makes a board without ClickUp, and "Link to ClickUp list…" links a local board to a list.
+3. Use "↓ Pull" to copy the board's ClickUp list onto the board (ClickUp wins, nothing is written to ClickUp) and "↑ Push" to copy the board onto ClickUp (the board wins). If either would overwrite changes made on the other side, it first lists each conflict (field, parent or dependency) and lets you keep the board value, take ClickUp's, merge both (tags, assignees) or write your own (name, description). Pull still writes nothing to ClickUp: values you keep on the board go with the next Push.
 4. Deleting a task that exists in ClickUp only removes it from the board and lists it under "🗑 pending deletions" in the header, where you can restore it. Pull leaves it off the board; Push asks about each one: delete it in ClickUp, keep it there (the next Pull brings it back), apply the same answer to all remaining ones, or cancel the push.
 5. The summary next to the buttons opens the sync log: the last 20 pulls / pushes with every task and field that changed.
 
@@ -77,7 +77,7 @@ See `CLAUDE.md` for a detailed breakdown of the pull / push rules and field cove
 
 ### Portfolio
 
-Open **Portfolio** in the header, then **Projects** to tick the ClickUp lists that make up the portfolio. They are fetched read only (GET requests, nothing is written back) and cached in `localStorage`; **Refresh** fetches them again. The list connected to the board always uses the live board data, including unsynced edits. Without a ClickUp connection the portfolio shows the current board only, and **Load demo data** fills it with sample projects for a look around.
+Open **Portfolio** in the header, then **Projects** to tick the ClickUp lists that make up the portfolio. They are fetched read only (GET requests, nothing is written back) and cached in `localStorage`; **Refresh** fetches them again. The list of the current board always uses the live board data, including unsynced edits, and **Board** in the overview opens any project as the board. Without a ClickUp connection the portfolio shows the current board only, and **Load demo data** fills it with sample projects for a look around.
 
 Est. hours use the ClickUp time estimate, spread evenly over the task's working days (Mon-Fri) and split between its assignees. Tasks without an estimate are listed separately rather than guessed.
 
@@ -89,9 +89,10 @@ Subtasks: the task count only counts the subtasks of a parent, not the parent ag
 src/
   components/     UI components (task rows, popups, dialogs, pickers)
     portfolio/    Portfolio view: overview, roadmap, workload, people
-  hooks/          useTasks (state + persistence), useClickUpConfig, useSettings, usePortfolio, useHashRoute
+  hooks/          useTasks (state + persistence), useBoards, useClickUpConfig, useWorkspaceTree, useSettings, usePortfolio, useHashRoute
   lib/
     frappe-gantt/ vendored Gantt chart library with local fixes
+    boards.ts     boards kept in this browser, storage keys, migration from the single board
     dates.ts      calendar helpers shared by export and portfolio
     settings.ts   user settings model, defaults, backlog and DoD matching
     warnings.ts   task warnings (description, DoD, priority)

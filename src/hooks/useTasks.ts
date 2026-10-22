@@ -1,14 +1,12 @@
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useState, useEffect, type SetStateAction } from 'react'
 import type { Assignee, GanttTask, PendingDeletion } from '../types'
 import type { RemoteTask } from '../lib/clickup'
+import { boardKey } from '../lib/boards'
 import { prunePending, recordDeletion, restoreDeletion } from '../lib/deletions'
 import {
   indentTask as indentIn, moveTask as moveIn, outdentTask as outdentIn,
   removeSubtree, setParent, sortTasks as sortIn, type DropPosition,
 } from '../lib/tree'
-
-const STORAGE_KEY = 'gantt-tasks'
-const PENDING_KEY = 'gantt-pending-deletions'
 
 function today(): Date {
   const d = new Date()
@@ -42,9 +40,11 @@ export function deserialize(raw: string): GanttTask[] {
   return parsed.map(t => reviveTask(t))
 }
 
-function loadFromStorage(): GanttTask[] {
+// A board's tasks; the example task when the board has never saved any
+// (boards created in the app save [] right away, so that is a fresh install)
+export function loadTasks(boardId: string): GanttTask[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(boardKey('tasks', boardId))
     if (raw) return deserialize(raw)
   } catch {
     // corrupted storage — start fresh
@@ -60,9 +60,9 @@ function loadFromStorage(): GanttTask[] {
   ]
 }
 
-function loadPending(): PendingDeletion[] {
+export function loadPending(boardId: string): PendingDeletion[] {
   try {
-    const raw = localStorage.getItem(PENDING_KEY)
+    const raw = localStorage.getItem(boardKey('pending', boardId))
     if (raw) {
       const parsed = JSON.parse(raw) as unknown
       if (Array.isArray(parsed)) {
@@ -75,20 +75,54 @@ function loadPending(): PendingDeletion[] {
   return []
 }
 
-export function useTasks() {
-  const [tasks, setTasks] = useState<GanttTask[]>(loadFromStorage)
+interface BoardData {
+  boardId: string
+  tasks: GanttTask[]
   // Linked tasks deleted on the board, until Push settles them or they are restored
-  const [pending, setPending] = useState<PendingDeletion[]>(loadPending)
+  pending: PendingDeletion[]
+}
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
-  }, [tasks])
+const loadBoard = (boardId: string): BoardData =>
+  ({ boardId, tasks: loadTasks(boardId), pending: loadPending(boardId) })
+
+const apply = <T,>(next: SetStateAction<T>, prev: T): T =>
+  (typeof next === 'function' ? (next as (p: T) => T)(prev) : next)
+
+// The tasks of one board. Switching boardId loads the other board's data in
+// the same render, and the data carries its own board id, so one board's
+// tasks are never saved under another board's key.
+export function useTasks(boardId: string) {
+  const [data, setData] = useState<BoardData>(() => loadBoard(boardId))
+  const [storageFull, setStorageFull] = useState(false)
+  let current = data
+  if (data.boardId !== boardId) {
+    current = loadBoard(boardId)
+    setData(current)
+  }
+  const { tasks, pending } = current
+
+  const setTasks = useCallback((next: SetStateAction<GanttTask[]>) => {
+    setData(d => ({ ...d, tasks: apply(next, d.tasks) }))
+  }, [])
+
+  const setPending = useCallback((next: SetStateAction<PendingDeletion[]>) => {
+    setData(d => ({ ...d, pending: apply(next, d.pending) }))
+  }, [])
 
   useEffect(() => {
     try {
-      localStorage.setItem(PENDING_KEY, JSON.stringify(pending))
+      localStorage.setItem(boardKey('tasks', data.boardId), JSON.stringify(data.tasks))
+      setStorageFull(false)
+    } catch {
+      setStorageFull(true)
+    }
+  }, [data.boardId, data.tasks])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(boardKey('pending', data.boardId), JSON.stringify(data.pending))
     } catch { /* quota */ }
-  }, [pending])
+  }, [data.boardId, data.pending])
 
   function addTask() {
     const t = today()
@@ -172,6 +206,6 @@ export function useTasks() {
   return {
     tasks, setTasks, addTask, commitTask, removeTask, updateTask,
     moveTask, sortTasks, setTaskParent, indentTask, outdentTask, clearTasks,
-    pending, restorePending, dropPending, prunePendingFor,
+    pending, restorePending, dropPending, prunePendingFor, storageFull,
   }
 }

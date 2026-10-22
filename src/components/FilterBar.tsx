@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Assignee, Filter, FilterType, GanttTask, Tag } from '../types'
-import { useClickUpConfig } from '../hooks/useClickUpConfig'
 import { getListStatuses } from '../lib/clickup'
 
 function readableFg(bg?: string): string | undefined {
@@ -174,17 +173,29 @@ function MultiSelectList<K>({
 
 // ─── Value editors ───────────────────────────────────────────────────────────
 
-function StatusValueEditor({ value, onChange, allTasks }: { value: string[]; onChange: (v: string[]) => void; allTasks: GanttTask[] }) {
+// The board's ClickUp list, for its status colors
+export interface StatusSource {
+  token: string
+  listId: string
+}
+
+function StatusValueEditor({ value, onChange, allTasks, statusSource }: {
+  value: string[]
+  onChange: (v: string[]) => void
+  allTasks: GanttTask[]
+  statusSource?: StatusSource
+}) {
   const statuses = uniqueStatuses(allTasks)
-  const { config } = useClickUpConfig()
   const [fetchedColors, setFetchedColors] = useState<Map<string, string>>(new Map())
+  const token = statusSource?.token
+  const listId = statusSource?.listId
 
   useEffect(() => {
-    if (!config?.token || !config?.listId) return
-    getListStatuses(config.token, config.listId)
+    if (!token || !listId) return
+    getListStatuses(token, listId)
       .then(ss => setFetchedColors(new Map(ss.map(s => [s.status, s.color]))))
       .catch(() => {})
-  }, [config?.token, config?.listId])
+  }, [token, listId])
 
   const colorMap = new Map(statuses.map(s => [s.name, fetchedColors.get(s.name) ?? s.color]))
 
@@ -367,9 +378,10 @@ function chipTypeLabel(f: Filter): string {
 
 // ─── FilterChip ──────────────────────────────────────────────────────────────
 
-function FilterChip({ filter, allTasks, onChange, onRemove }: {
+function FilterChip({ filter, allTasks, statusSource, onChange, onRemove }: {
   filter: Filter
   allTasks: GanttTask[]
+  statusSource?: StatusSource
   onChange: (f: Filter) => void
   onRemove: () => void
 }) {
@@ -383,7 +395,7 @@ function FilterChip({ filter, allTasks, onChange, onRemove }: {
   const opLabel = chipOpLabel(filter)
 
   const editorMap: Partial<Record<FilterType, React.ReactNode>> = {
-    status:   <StatusValueEditor   value={filter.value as string[]}        onChange={v => setField('value', v)} allTasks={allTasks} />,
+    status:   <StatusValueEditor   value={filter.value as string[]}        onChange={v => setField('value', v)} allTasks={allTasks} statusSource={statusSource} />,
     tag:      <TagValueEditor      value={filter.value as string[]}        onChange={v => setField('value', v)} allTasks={allTasks} />,
     assignee: <AssigneeValueEditor value={filter.value as number[]}        onChange={v => setField('value', v)} allTasks={allTasks} />,
     priority: <PriorityValueEditor value={filter.value as number[]}        onChange={v => setField('value', v)} />,
@@ -459,9 +471,10 @@ interface FilterBarProps {
   matchMode: 'all' | 'any'
   setMatchMode: (mode: 'all' | 'any') => void
   visibleCount: number
+  statusSource?: StatusSource
 }
 
-export function FilterBar({ allTasks, filters, setFilters, matchMode, setMatchMode, visibleCount }: FilterBarProps) {
+export function FilterBar({ allTasks, filters, setFilters, matchMode, setMatchMode, visibleCount, statusSource }: FilterBarProps) {
   function update(id: string, next: Filter) { setFilters(filters.map(f => f.id === id ? next : f)) }
   function remove(id: string)               { setFilters(filters.filter(f => f.id !== id)) }
   function add(f: Filter)                   { setFilters([...filters, f]) }
@@ -483,7 +496,7 @@ export function FilterBar({ allTasks, filters, setFilters, matchMode, setMatchMo
 
         <div className="fbar__chips">
           {filters.map(f => (
-            <FilterChip key={f.id} filter={f} allTasks={allTasks}
+            <FilterChip key={f.id} filter={f} allTasks={allTasks} statusSource={statusSource}
               onChange={n => update(f.id, n)} onRemove={() => remove(f.id)} />
           ))}
           {filters.length >= 2 && (

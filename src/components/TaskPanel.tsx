@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Filter, GanttTask } from '../types'
 import { TaskRow } from './TaskRow'
-import { FilterBar } from './FilterBar'
+import { FilterBar, type StatusSource } from './FilterBar'
 import { GANTT_HEADER_HEIGHT } from '../constants'
 import {
   ancestors, canBecomeTopLevel, canOutdent, indentTarget, moveTarget, TOP_LEVEL_BLOCKED,
@@ -35,12 +35,14 @@ interface Props {
   listRef: RefObject<HTMLDivElement>
   criticalIds: Set<string>
   settings: Settings
+  statusSource?: StatusSource
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
   onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
   onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
+  statusSource,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -116,6 +118,7 @@ export function TaskPanel({
         matchMode={matchMode}
         setMatchMode={setMatchMode}
         visibleCount={matchCount}
+        statusSource={statusSource}
       />
 
       <div className="task-panel__list" ref={listRef}>

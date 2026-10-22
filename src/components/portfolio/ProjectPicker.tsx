@@ -1,27 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  listFolderlessLists, listFolders, listLists, listSpaces, type List,
-} from '../../lib/clickup'
 import type { ProjectRef } from '../../lib/portfolioData'
+import { filterTree, treeRefs } from '../../lib/workspace'
+import type { WorkspaceTree } from '../../hooks/useWorkspaceTree'
 
 interface Props {
-  token: string
-  teamId: string
+  workspace: WorkspaceTree
   boardListId?: string
   refs: ProjectRef[]
   onSave: (refs: ProjectRef[]) => void
   onClose: () => void
 }
 
-interface SpaceNode {
-  id: string
-  name: string
-  groups: Array<{ id: string; name?: string; lists: List[] }> // name undefined = folderless
-}
-
-export function ProjectPicker({ token, teamId, boardListId, refs, onSave, onClose }: Props) {
-  const [tree, setTree] = useState<SpaceNode[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+export function ProjectPicker({ workspace, boardListId, refs, onSave, onClose }: Props) {
+  const { tree, error, load } = workspace
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(() => {
     const ids = new Set(refs.map(r => r.listId))
@@ -29,27 +20,7 @@ export function ProjectPicker({ token, teamId, boardListId, refs, onSave, onClos
     return ids
   })
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      try {
-        const spaces = await listSpaces(token, teamId)
-        const nodes = await Promise.all(spaces.map(async (s): Promise<SpaceNode> => {
-          const [folders, folderless] = await Promise.all([listFolders(token, s.id), listFolderlessLists(token, s.id)])
-          const groups: SpaceNode['groups'] = await Promise.all(folders.map(async f => ({
-            id: f.id, name: f.name as string | undefined, lists: f.lists ?? await listLists(token, f.id),
-          })))
-          if (folderless.length) groups.unshift({ id: `${s.id}:folderless`, name: undefined, lists: folderless })
-          return { id: s.id, name: s.name, groups }
-        }))
-        if (!cancelled) setTree(nodes)
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [token, teamId])
+  useEffect(() => { load() }, [load])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,26 +31,8 @@ export function ProjectPicker({ token, teamId, boardListId, refs, onSave, onClos
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // Every list in the tree as a ProjectRef, in tree order
-  const allRefs = useMemo(() => {
-    const out = new Map<string, ProjectRef>()
-    for (const s of tree ?? []) for (const g of s.groups) for (const l of g.lists) {
-      out.set(l.id, { listId: l.id, name: l.name, spaceName: s.name, folderName: g.name })
-    }
-    return out
-  }, [tree])
-
-  const q = query.trim().toLowerCase()
-  const visibleTree = useMemo(() => {
-    if (!tree || !q) return tree
-    return tree.map(s => ({
-      ...s,
-      groups: s.groups.map(g => ({
-        ...g,
-        lists: g.lists.filter(l => [l.name, g.name ?? '', s.name].some(t => t.toLowerCase().includes(q))),
-      })).filter(g => g.lists.length),
-    })).filter(s => s.groups.length)
-  }, [tree, q])
+  const allRefs = useMemo(() => treeRefs(tree), [tree])
+  const visibleTree = useMemo(() => tree && filterTree(tree, query), [tree, query])
 
   function toggle(ids: string[], on: boolean) {
     setSelected(prev => {
@@ -115,7 +68,12 @@ export function ProjectPicker({ token, teamId, boardListId, refs, onSave, onClos
             onChange={e => setQuery(e.target.value)} autoFocus />
         </div>
         <div className="pf-picker__body">
-          {error && <p className="exp-err">Could not load the workspace: {error}</p>}
+          {error && (
+            <p className="exp-err">
+              Could not load the workspace: {error}{' '}
+              <button type="button" className="exp-btn" onClick={() => load(true)}>Retry</button>
+            </p>
+          )}
           {!tree && !error && <p className="pf-muted">Loading workspace…</p>}
           {visibleTree?.length === 0 && <p className="pf-muted">No list matches "{query}".</p>}
           {visibleTree?.map(s => (

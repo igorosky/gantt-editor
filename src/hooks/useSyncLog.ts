@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { SyncReport } from '../types'
 import { capRun } from '../lib/syncLog'
+import { boardKey } from '../lib/boards'
 
-const STORAGE_KEY = 'gantt-sync-log'
 const MAX_RUNS = 20
 
-function load(): SyncReport[] {
+function load(boardId: string): SyncReport[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(boardKey('log', boardId))
     if (raw) {
       const p = JSON.parse(raw) as unknown
       if (Array.isArray(p)) {
@@ -18,21 +18,27 @@ function load(): SyncReport[] {
   return []
 }
 
-// Pull / push history, newest first. A quota failure keeps it in memory only.
-export function useSyncLog() {
-  const [runs, setRuns] = useState<SyncReport[]>(load)
+// Pull / push history of one board, newest first. A quota failure keeps it in
+// memory only. Switching boardId loads that board's log in the same render.
+export function useSyncLog(boardId: string) {
+  const [log, setLog] = useState(() => ({ boardId, runs: load(boardId) }))
+  let current = log
+  if (log.boardId !== boardId) {
+    current = { boardId, runs: load(boardId) }
+    setLog(current)
+  }
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(runs))
+      localStorage.setItem(boardKey('log', log.boardId), JSON.stringify(log.runs))
     } catch { /* quota */ }
-  }, [runs])
+  }, [log])
 
   const addRun = useCallback((run: Omit<SyncReport, 'id'>) => {
-    setRuns(prev => [capRun({ ...run, id: crypto.randomUUID() }), ...prev].slice(0, MAX_RUNS))
+    setLog(l => ({ ...l, runs: [capRun({ ...run, id: crypto.randomUUID() }), ...l.runs].slice(0, MAX_RUNS) }))
   }, [])
 
-  const clear = useCallback(() => setRuns([]), [])
+  const clear = useCallback(() => setLog(l => ({ ...l, runs: [] })), [])
 
-  return { runs, addRun, clear }
+  return { runs: current.runs, addRun, clear }
 }

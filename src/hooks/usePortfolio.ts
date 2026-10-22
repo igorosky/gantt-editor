@@ -40,16 +40,19 @@ export interface Progress {
   total: number
 }
 
-// Read-only portfolio state. The current board's list always comes from the
-// live board tasks, never from the cache, so unsynced edits show up too.
-export function usePortfolio(boardTasks: GanttTask[], cu: ClickUpConfig | null, dodKeywords: string[]) {
+// Read-only portfolio state. The current board's list (`boardListId`, absent
+// for a local board) always comes from the live board tasks, never from the
+// cache, so unsynced edits show up too.
+export function usePortfolio(
+  boardTasks: GanttTask[], cu: ClickUpConfig | null, boardList: string | undefined, dodKeywords: string[],
+) {
   const [config, setConfig] = useState<PortfolioConfig>(loadConfig)
   const [cache, setCache] = useState<PortfolioCache>(loadCache)
   const [demo, setDemo] = useState<PortfolioProject[] | null>(null)
   const [progress, setProgress] = useState<Progress | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const boardListId = cu?.listId || undefined
+  const boardListId = boardList || undefined
   const canFetch = !!cu?.token
 
   useEffect(() => {

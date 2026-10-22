@@ -59,15 +59,27 @@ export interface PendingDeletion {
   tasks: GanttTask[]
 }
 
+// Connection to ClickUp: the token and the workspace. Which list a board is
+// linked to lives on the board (BoardRef), so the portfolio needs only this.
 export interface ClickUpConfig {
   token: string
   teamId: string
-  spaceId: string
-  folder: string | 'folderless'
-  listId: string
+}
+
+// One board kept in this browser: a local copy of a ClickUp list (listId), or
+// a local-only board (no listId). Its tasks, pending deletions and sync log
+// are stored under keys suffixed with the id (lib/boards.ts).
+export interface BoardRef {
+  id: string
+  name: string
+  listId?: string
+  spaceId?: string // the list's space, for its tags
+  spaceName?: string
+  folderName?: string
   // Last successful pull or push (ISO): the baseline the pull / push risk
   // checks compare ClickUp's date_updated against
   lastSyncAt?: string
+  openedAt?: string // ISO, orders the switcher
 }
 
 // Whether the critical path is computed over every task or over the rows the

@@ -43,6 +43,7 @@ export interface RemoteTask {
   description?: string
   time_estimate?: number | null
   list?: { id: string; name: string }
+  space?: { id: string }
   // Parent task id for a subtask, null for a top-level task
   parent?: string | null
 }

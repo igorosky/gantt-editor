@@ -5,7 +5,7 @@ import {
   type ProjectHealth, type Rag, type RiskKind,
 } from '../../lib/portfolio'
 import { withoutBacklog, type Settings } from '../../lib/settings'
-import { projectPath, type PortfolioProject, type PortfolioTask } from '../../lib/portfolioData'
+import { projectPath, type PortfolioProject, type PortfolioTask, type ProjectRef } from '../../lib/portfolioData'
 import { LOCAL_BOARD_ID } from '../../hooks/usePortfolio'
 import { clickupListUrl, clickupTaskUrl } from './shared'
 
@@ -13,7 +13,7 @@ interface Props {
   projects: PortfolioProject[]
   today: Date
   teamId?: string
-  onOpenBoard: () => void
+  onOpenBoard: (ref?: ProjectRef) => void
   settings: Settings
 }
 
@@ -225,8 +225,10 @@ export function OverviewTab({ projects, today, teamId, onOpenBoard, settings }: 
                         : <span className="pf-muted">-</span>}
                     </td>
                     <td className="pf-nowrap" onClick={e => e.stopPropagation()}>
-                      {p.isCurrentBoard && (
-                        <button type="button" className="pf-link-btn" onClick={onOpenBoard} title="Open in board">Board</button>
+                      {(p.isCurrentBoard || (teamId && p.ref.listId !== LOCAL_BOARD_ID)) && (
+                        <button type="button" className="pf-link-btn"
+                          onClick={() => onOpenBoard(p.isCurrentBoard ? undefined : p.ref)}
+                          title={p.isCurrentBoard ? 'Show the board' : 'Open this list as the board'}>Board</button>
                       )}
                       {teamId && p.ref.listId !== LOCAL_BOARD_ID && (
                         <a className="pf-link-btn" href={clickupListUrl(teamId, id)} target="_blank" rel="noreferrer"

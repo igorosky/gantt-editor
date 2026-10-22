@@ -114,3 +114,14 @@ export function autoUnit(from: Date, to: Date): TimeUnit {
   if (days <= 550) return 'week'
   return 'month'
 }
+
+// "just now", "5 min ago", "3 h ago", "4 days ago"; "never" without a time
+export function timeAgo(iso: string | undefined, now: number): string {
+  if (!iso) return 'never'
+  const min = Math.round((now - Date.parse(iso)) / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  if (h < 48) return `${h} h ago`
+  return `${Math.round(h / 24)} days ago`
+}
