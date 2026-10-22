@@ -5,7 +5,7 @@ import type { CriticalScope, GanttTask } from '../types'
 import { getAllSuccessors, isMilestone } from '../utils'
 import { edgeKey } from '../lib/criticalPath'
 import {
-  buildTree, descendants, dragClosure, subtreeSpan, type DateSortKey, type SortDir, type TreeRow,
+  buildTree, descendants, dragClosure, subtreeSpan, type TreeRow,
 } from '../lib/tree'
 import { daysBetween, isoDay, shiftDays, type Calendar } from '../lib/dates'
 
@@ -28,77 +28,6 @@ const calendarKey = (c: Calendar) => `${c.weekStart}:${c.workdays.join(',')}`
 // Whether the task gets a bar (a dateless one is a hidden placeholder row)
 const hasBar = (t: GanttTask): boolean => (isMilestone(t) ? !!(t.end ?? t.start) : !!(t.start && t.end))
 
-const SORTS: { key: DateSortKey; dir: SortDir; label: string }[] = [
-  { key: 'start', dir: 'asc', label: 'Start date, earliest first' },
-  { key: 'start', dir: 'desc', label: 'Start date, latest first' },
-  { key: 'due', dir: 'asc', label: 'Due date, earliest first' },
-  { key: 'due', dir: 'desc', label: 'Due date, latest first' },
-]
-
-// One-shot reorder of the saved task order. Fixed-position like the row menu,
-// so the panel's overflow never clips it.
-function SortMenu({ disabled, onSort }: { disabled: boolean; onSort: (key: DateSortKey, dir: SortDir) => void }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!pos) return
-    const onDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node) && !btnRef.current?.contains(e.target as Node)) setPos(null)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null) }
-    const onResize = () => setPos(null)
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('resize', onResize)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', onResize)
-    }
-  }, [pos])
-
-  function toggle() {
-    if (pos) { setPos(null); return }
-    const r = btnRef.current!.getBoundingClientRect()
-    setPos({ x: r.left, y: r.bottom + 4 })
-  }
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        type="button"
-        className={`gantt-panel__sort-btn${pos ? ' gantt-panel__sort-btn--active' : ''}`}
-        onClick={toggle}
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={!!pos}
-        title="Reorder the tasks by date. Subtasks are sorted under their parent. Replaces the current manual order."
-      >
-        ⇅ Sort
-      </button>
-      {pos && (
-        <div ref={menuRef} className="row-menu" role="menu" style={{ left: pos.x, top: pos.y }}>
-          {SORTS.map(s => (
-            <button
-              key={`${s.key}-${s.dir}`}
-              type="button"
-              role="menuitem"
-              className="row-menu__item"
-              onClick={() => { setPos(null); onSort(s.key, s.dir) }}
-            >
-              <span>{s.label}</span>
-              <span className="row-menu__hint">undated last</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </>
-  )
-}
-
 interface Props {
   tasks: GanttTask[] // the visible rows, in display order
   allTasks: GanttTask[] // every task: subtask spans and date propagation reach hidden rows too
@@ -106,7 +35,6 @@ interface Props {
   onDateChange: (id: string, start: Date, end: Date) => void
   onContainerReady: (el: HTMLElement) => void
   onToggleDependency: (sourceId: string, targetId: string) => void
-  onSort: (key: DateSortKey, dir: SortDir) => void
   focusIdRef?: React.MutableRefObject<string | null>
   criticalIds: Set<string>
   criticalEdges: Set<string>
@@ -127,7 +55,6 @@ export function GanttPanel({
   onDateChange,
   onContainerReady,
   onToggleDependency,
-  onSort,
   focusIdRef,
   criticalIds,
   criticalEdges,
@@ -455,7 +382,6 @@ export function GanttPanel({
         >
           {connectMode ? '✕ Cancel' : '⇢ Connect tasks'}
         </button>
-        <SortMenu disabled={allTasks.length < 2} onSort={onSort} />
         {connectMode && (
           <span className="gantt-panel__connect-hint">{connectLabel}</span>
         )}

@@ -247,31 +247,33 @@ export function outdentTask<T extends GanttTask>(tasks: T[], id: string): T[] {
   return p === undefined ? tasks : moveTask(tasks, id, p, 'after')
 }
 
-export type DateSortKey = 'start' | 'due'
-export type SortDir = 'asc' | 'desc'
-
 // Local day of a task's start or due date (a one-date task or milestone uses
 // that date for both), or null when it has no dates
-function sortDay(t: GanttTask, key: DateSortKey): number | null {
+function sortDay(t: GanttTask, key: 'start' | 'due'): number | null {
   const d = key === 'start' ? t.start ?? t.end : t.end ?? t.start
   return d ? startOfDay(d).getTime() : null
 }
 
-// Reorders by a date. Array order is sibling order, so every level ends up
-// sorted and each subtask stays under its parent. Compared by local day, so
-// times of day (frappe's 23:59:59 ends, ClickUp's 4 am) never decide; a tie
-// goes to the other date, then keeps the current order. Undated tasks last in
-// both directions. Returns `tasks` itself when nothing moves.
-export function sortByDate<T extends GanttTask>(tasks: T[], key: DateSortKey, dir: SortDir = 'asc'): T[] {
-  const other: DateSortKey = key === 'start' ? 'due' : 'start'
-  const sign = dir === 'asc' ? 1 : -1
-  const sorted = [...tasks].sort((a, b) => {
-    const ka = sortDay(a, key)
-    const kb = sortDay(b, key)
-    if (ka === null || kb === null) return ka === kb ? 0 : ka === null ? 1 : -1
-    if (ka !== kb) return sign * (ka - kb)
-    return sign * (sortDay(a, other)! - sortDay(b, other)!)
-  })
+// Missing (null) after any value
+function nullsLast(a: number | null, b: number | null): number {
+  if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1
+  return a - b
+}
+
+// Case-insensitive, and "Task 2" before "Task 10"
+const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
+
+// Reorders by start date, then due date, priority (Urgent first) and name;
+// a full tie keeps the current order, anything missing goes last. Array order
+// is sibling order, so every level ends up sorted and each subtask stays under
+// its parent. Dates compare by local day, so times of day (frappe's 23:59:59
+// ends, ClickUp's 4 am) never decide. Returns `tasks` itself when nothing moves.
+export function sortTasks<T extends GanttTask>(tasks: T[]): T[] {
+  const sorted = [...tasks].sort((a, b) =>
+    nullsLast(sortDay(a, 'start'), sortDay(b, 'start'))
+    || nullsLast(sortDay(a, 'due'), sortDay(b, 'due'))
+    || nullsLast(a.priority ?? null, b.priority ?? null)
+    || nameCollator.compare(a.name, b.name))
   return sorted.every((t, i) => t === tasks[i]) ? tasks : sorted
 }
 

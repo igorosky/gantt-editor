@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { GanttTask } from '../types'
 import {
   buildTree, canBecomeTopLevel, canOutdent, descendants, dragClosure, flattenTree,
-  indentTarget, indentTask, moveTask, outdentTask, removeSubtree, setParent, sortByDate, subtreeSpan,
+  indentTarget, indentTask, moveTask, outdentTask, removeSubtree, setParent, sortTasks, subtreeSpan,
 } from './tree'
 
 const d = (m: number, day: number) => new Date(2026, m - 1, day)
@@ -151,7 +151,7 @@ describe('indent / outdent / setParent / remove', () => {
   })
 })
 
-describe('sortByDate', () => {
+describe('sortTasks', () => {
   const ids = (tasks: GanttTask[]) => tasks.map(x => x.id)
 
   it('sorts every sibling level, each subtask stays under its parent', () => {
@@ -162,21 +162,20 @@ describe('sortByDate', () => {
       t('b1', { parentId: 'b', start: d(3, 6), end: d(3, 7) }),
       t('a1', { parentId: 'a', start: d(3, 2), end: d(3, 4) }),
     ]
-    const sorted = sortByDate(tasks, 'start')
+    const sorted = sortTasks(tasks)
     expect(order(sorted)).toEqual(['a', 'a1', 'a2', 'b', 'b1'])
     expect(parents(sorted)).toEqual(parents(tasks))
   })
 
-  it('puts undated tasks last in both directions', () => {
+  it('puts undated tasks last, ordered among themselves by priority then name', () => {
     const tasks = [
-      t('none'),
+      t('zeta'),
       t('late', { start: d(3, 9), end: d(3, 10) }),
+      t('alpha'),
+      t('urgent', { priority: 1 }),
       t('early', { start: d(3, 1), end: d(3, 12) }),
     ]
-    expect(ids(sortByDate(tasks, 'start', 'asc'))).toEqual(['early', 'late', 'none'])
-    expect(ids(sortByDate(tasks, 'start', 'desc'))).toEqual(['late', 'early', 'none'])
-    expect(ids(sortByDate(tasks, 'due', 'asc'))).toEqual(['late', 'early', 'none'])
-    expect(ids(sortByDate(tasks, 'due', 'desc'))).toEqual(['early', 'late', 'none'])
+    expect(ids(sortTasks(tasks))).toEqual(['early', 'late', 'urgent', 'alpha', 'zeta'])
   })
 
   it('uses the one date of a half-dated task or a milestone for both keys', () => {
@@ -184,25 +183,49 @@ describe('sortByDate', () => {
       t('x', { start: d(3, 4), end: d(3, 6) }),
       t('dueOnly', { end: d(3, 5) }),
       t('m', { type: 'milestone', start: d(3, 3), end: d(3, 3) }),
+      t('startOnly', { start: d(3, 4) }),
     ]
-    expect(ids(sortByDate(tasks, 'start'))).toEqual(['m', 'x', 'dueOnly'])
-    expect(ids(sortByDate(tasks, 'due'))).toEqual(['m', 'dueOnly', 'x'])
+    expect(ids(sortTasks(tasks))).toEqual(['m', 'startOnly', 'x', 'dueOnly'])
   })
 
-  it('compares by day: a time of day is a tie, broken by the other date, then the current order', () => {
+  it('compares by day: a time of day is a tie, broken by the due date', () => {
     const at = (day: number, h: number, m = 0, s = 0) => new Date(2026, 2, day, h, m, s)
     const tasks = [
       t('p', { start: at(2, 4), end: at(8, 0) }), // ClickUp 4 am start
-      t('q', { start: at(2, 0), end: at(5, 23, 59, 59) }), // frappe end
       t('r', { start: at(2, 0), end: at(8, 4) }),
+      t('q', { start: at(2, 0), end: at(5, 23, 59, 59) }), // frappe end
     ]
-    expect(ids(sortByDate(tasks, 'start'))).toEqual(['q', 'p', 'r'])
-    expect(ids(sortByDate(tasks, 'start', 'desc'))).toEqual(['p', 'r', 'q'])
+    expect(ids(sortTasks(tasks))).toEqual(['q', 'p', 'r'])
   })
 
-  it('returns the same array when nothing moves', () => {
+  it('breaks a date tie by priority (Urgent first, none last), then by name', () => {
+    const same = { start: d(3, 1), end: d(3, 4) }
+    const tasks = [
+      t('none', { ...same }),
+      t('low', { ...same, priority: 4 }),
+      t('urgent', { ...same, priority: 1 }),
+      t('normal', { ...same, priority: 3 }),
+    ]
+    expect(ids(sortTasks(tasks))).toEqual(['urgent', 'normal', 'low', 'none'])
+  })
+
+  it('compares names case-insensitively and numerically', () => {
+    const same = { start: d(3, 1), end: d(3, 4), priority: 2 as const }
+    const tasks = [
+      t('10', { ...same, name: 'Task 10' }),
+      t('b', { ...same, name: 'task 2' }),
+      t('B', { ...same, name: 'Task 2b' }),
+      t('a', { ...same, name: 'alpha' }),
+    ]
+    expect(ids(sortTasks(tasks))).toEqual(['a', 'b', 'B', '10'])
+  })
+
+  it('keeps the current order on a full tie and returns the same array when nothing moves', () => {
+    const same = { name: 'Same', start: d(3, 1), end: d(3, 2) }
+    const tied = [t('y', same), t('x', same)]
+    expect(sortTasks(tied)).toBe(tied)
     const tasks = [t('a', { start: d(3, 1), end: d(3, 2) }), t('b', { start: d(3, 3), end: d(3, 4) }), t('u')]
-    expect(sortByDate(tasks, 'start')).toBe(tasks)
-    expect(sortByDate(tasks, 'start', 'desc')).not.toBe(tasks)
+    expect(sortTasks(tasks)).toBe(tasks)
+    expect(sortTasks([tasks[1], tasks[0]])).toEqual([tasks[0], tasks[1]])
   })
 })

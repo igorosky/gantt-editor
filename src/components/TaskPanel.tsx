@@ -21,6 +21,7 @@ interface Props {
   setMatchMode: (mode: 'all' | 'any') => void
   onAdd: () => void
   onClear: () => void
+  onSort: () => void
   onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<GanttTask>) => void
   onMove: (id: string, targetId: string, pos: DropPosition) => void
@@ -38,7 +39,7 @@ interface Props {
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
-  onAdd, onClear, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
+  onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
   onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
@@ -95,6 +96,14 @@ export function TaskPanel({
               {anyExpanded ? 'Collapse all' : 'Expand all'}
             </button>
           )}
+          <button
+            className="task-panel__sort-btn"
+            onClick={onSort}
+            disabled={allTasks.length < 2}
+            title="Reorder by start date, then due date, priority and name. Subtasks are sorted under their parent. Replaces the current manual order."
+          >
+            ⇅ Sort
+          </button>
           <button className="task-panel__clear-btn" onClick={onClear}>Clear all</button>
           <button className="task-panel__add-btn" onClick={onAdd}>+ Add task</button>
         </div>

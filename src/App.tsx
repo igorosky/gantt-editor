@@ -520,6 +520,7 @@ export default function App() {
             setMatchMode={setMatchMode}
             onAdd={handleAddTask}
             onClear={() => { if (confirm('Remove all tasks?')) clearTasks() }}
+            onSort={sortTasks}
             onRemove={handleRemove}
             onUpdate={handleTaskUpdate}
             onMove={moveTask}
@@ -544,7 +545,6 @@ export default function App() {
             onDateChange={(id, start, end) => updateTask(id, { start, end })}
             onContainerReady={handleContainerReady}
             onToggleDependency={handleToggleDependency}
-            onSort={sortTasks}
             focusIdRef={lhsFocusIdRef}
             criticalIds={critical.taskIds}
             criticalEdges={critical.edges}

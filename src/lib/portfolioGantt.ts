@@ -7,7 +7,7 @@ import type { PortfolioProject, PortfolioTask } from './portfolioData'
 import { computeCriticalPath, EMPTY_CRITICAL, type CriticalPath } from './criticalPath'
 import { isDone, projectHealth } from './portfolio'
 import { withoutBacklog, type Settings } from './settings'
-import { flattenTree, sortByDate } from './tree'
+import { flattenTree, sortTasks } from './tree'
 
 export type GanttOrder = 'start' | 'list'
 
@@ -42,7 +42,7 @@ export function portfolioGanttRows(
   for (const p of projects) {
     const tasks = projectTasks(p, settings)
     // Array order is sibling order, so sorting the array sorts every level
-    const ordered = opts.order === 'start' ? sortByDate(tasks, 'start') : tasks
+    const ordered = opts.order === 'start' ? sortTasks(tasks) : tasks
     const kept = new Set<string>()
     for (const t of tasks) {
       if (!opts.includeDone && isDone(t)) continue

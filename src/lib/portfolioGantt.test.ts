@@ -71,7 +71,7 @@ describe('portfolioGanttRows', () => {
     expect(shape(run([p], { includeDateless: false }).rows)).toEqual(['#A', 'A:a', 'A:m'])
   })
 
-  it('orders siblings by start date, undated last, ties by due date then list order', () => {
+  it('orders siblings by start date, undated last, ties by due date, priority, name', () => {
     const p = project('A', [
       task('late', { start: day(9), end: day(10) }),
       task('none', { start: undefined, end: undefined }),

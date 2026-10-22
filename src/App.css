@@ -415,13 +415,23 @@
   background: #5c67e8;
 }
 
+/* Wraps onto a second line when the panel is narrow (the header is 85px) */
 .task-panel__header-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 8px;
   align-items: center;
 }
 
-.task-panel__clear-btn {
+.task-panel__add-btn,
+.task-panel__clear-btn,
+.task-panel__sort-btn {
+  white-space: nowrap;
+}
+
+.task-panel__clear-btn,
+.task-panel__sort-btn {
   padding: 5px 12px;
   background: transparent;
   color: #999;
@@ -436,6 +446,17 @@
   background: #fff0f0;
   border-color: #f5a0a0;
   color: #c0392b;
+}
+
+.task-panel__sort-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.task-panel__sort-btn:disabled {
+  color: #ccc;
+  cursor: not-allowed;
 }
 
 .task-panel__list {
@@ -1151,8 +1172,7 @@
   color: var(--critical);
 }
 
-.gantt-panel__load-btn,
-.gantt-panel__sort-btn {
+.gantt-panel__load-btn {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1168,17 +1188,10 @@
 }
 
 .gantt-panel__load-btn:hover,
-.gantt-panel__load-btn--active,
-.gantt-panel__sort-btn:hover:not(:disabled),
-.gantt-panel__sort-btn--active {
+.gantt-panel__load-btn--active {
   border-color: var(--accent);
   color: var(--accent-strong);
   background: var(--accent-soft);
-}
-
-.gantt-panel__sort-btn:disabled {
-  color: #aaa;
-  cursor: not-allowed;
 }
 
 /* Workload strip under the board (see WorkloadStrip.tsx) */
