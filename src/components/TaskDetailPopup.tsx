@@ -4,6 +4,7 @@ import { getListStatuses, getSpaceTags, listTeamMembers, type ClickUpStatus, typ
 import { isMilestone, typeChangePatch } from '../utils'
 import { buildTree, canBecomeTopLevel, subtreeSpan, TOP_LEVEL_BLOCKED } from '../lib/tree'
 import { isDone } from '../lib/portfolio'
+import { sameTag } from '../lib/settings'
 import { fmtShort, startOfDay } from '../lib/dates'
 import { AssigneePicker } from './AssigneePicker'
 import { TagPicker } from './TagPicker'
@@ -25,6 +26,9 @@ interface Props {
   clickupTeamId?: string
   clickupListId?: string
   clickupSpaceId?: string
+  // The ClickUp tag that marks a milestone, when milestones are stored that
+  // way: picking it sets the type instead of adding a tag
+  milestoneTag?: string
 }
 
 // Keep in sync with --milestone in App.css and --g-milestone-color in the gantt theme
@@ -262,7 +266,7 @@ const fmtSpan = (s?: Date, e?: Date): string =>
 
 export function TaskDetailPopup({
   task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, isCreateMode,
-  clickupToken, clickupTeamId, clickupListId, clickupSpaceId,
+  clickupToken, clickupTeamId, clickupListId, clickupSpaceId, milestoneTag,
 }: Props) {
   const [nameDraft, setNameDraft] = useState(task.name)
   const [descDraft, setDescDraft] = useState(task.description ?? '')
@@ -358,7 +362,26 @@ export function TaskDetailPopup({
     }
   }
 
+  const changeType = (v: TaskType) => {
+    const patch = typeChangePatch(task, v)
+    // Keep the placeholder name of an untouched draft in step with its type
+    const auto = v === 'milestone' ? 'New milestone' : 'New task'
+    const stale = v === 'milestone' ? 'New task' : 'New milestone'
+    if (isCreateMode && nameDraft.trim() === stale) {
+      setNameDraft(auto)
+      onUpdate({ ...patch, name: auto })
+      return
+    }
+    onUpdate(patch)
+  }
+
+  const isMarker = (name: string) => !!milestoneTag && sameTag(name, milestoneTag)
+
   const toggleTag = (tag: Tag) => {
+    if (isMarker(tag.name)) {
+      changeType('milestone')
+      return
+    }
     const cur = task.tags ?? []
     const exists = cur.some(t => t.name === tag.name)
     onUpdate({
@@ -371,6 +394,11 @@ export function TaskDetailPopup({
   }
 
   const createTag = (name: string) => {
+    if (isMarker(name)) {
+      changeType('milestone')
+      setTagPickerOpen(false)
+      return
+    }
     const newTag: Tag = { name }
     setSpaceTags(prev => prev.some(t => t.name === name) ? prev : [...prev, newTag])
     toggleTag(newTag)
@@ -416,18 +444,7 @@ export function TaskDetailPopup({
             <div className="tdp-hero-pills">
               <TypePill
                 value={task.type ?? 'task'}
-                onChange={v => {
-                  const patch = typeChangePatch(task, v)
-                  // Keep the placeholder name of an untouched draft in step with its type
-                  const auto = v === 'milestone' ? 'New milestone' : 'New task'
-                  const stale = v === 'milestone' ? 'New task' : 'New milestone'
-                  if (isCreateMode && nameDraft.trim() === stale) {
-                    setNameDraft(auto)
-                    onUpdate({ ...patch, name: auto })
-                    return
-                  }
-                  onUpdate(patch)
-                }}
+                onChange={changeType}
               />
               <PriorityPill value={task.priority} onChange={v => onUpdate({ priority: v })} />
             </div>
@@ -546,7 +563,7 @@ export function TaskDetailPopup({
               )}
               {tagPickerOpen && (
                 <TagPicker
-                  spaceTags={spaceTags}
+                  spaceTags={milestoneTag ? spaceTags.filter(t => !isMarker(t.name)) : spaceTags}
                   loading={tagsLoading}
                   error={tagsError}
                   selected={task.tags ?? []}

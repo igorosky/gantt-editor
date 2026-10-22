@@ -11,6 +11,14 @@ export type BacklogArea = 'board' | 'warnings' | 'health' | 'workload'
 
 export const BACKLOG_AREAS: BacklogArea[] = ['board', 'warnings', 'health', 'workload']
 
+// How milestones are stored in ClickUp: as the Milestone task type (needs the
+// Milestones ClickApp, which the Free Forever plan lacks) or as plain tasks
+// carrying a marker tag. On the board a milestone is always type 'milestone'.
+export interface MilestoneStyle {
+  as: 'type' | 'tag'
+  tag: string
+}
+
 export interface Settings {
   warnings: {
     emptyDescription: boolean
@@ -34,6 +42,7 @@ export interface Settings {
     // Amber when this share of open tasks has no start or no end date
     amberUnscheduledShare: number
   }
+  milestones: MilestoneStyle
 }
 
 export const DEFAULT_DOD_KEYWORDS = ['DoD', 'Definition of Done']
@@ -55,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
     redOverdueShare: 0.2,
     amberUnscheduledShare: 0.25,
   },
+  milestones: { as: 'type', tag: 'milestone' },
 }
 
 /* ------------------------------------------------------------- normalize */
@@ -99,6 +109,7 @@ export function normalizeSettings(raw: unknown): Settings {
   const b = isObj(r.backlog) ? r.backlog : {}
   const inc = isObj(b.include) ? b.include : {}
   const ru = isObj(r.rules) ? r.rules : {}
+  const ms = isObj(r.milestones) ? r.milestones : {}
 
   const keywords = cleanNames(w.dodKeywords)
   const workdays = weekdays(c.workdays)
@@ -132,8 +143,18 @@ export function normalizeSettings(raw: unknown): Settings {
       redOverdueShare: num(ru.redOverdueShare, 0, 1, d.rules.redOverdueShare),
       amberUnscheduledShare: num(ru.amberUnscheduledShare, 0, 1, d.rules.amberUnscheduledShare),
     },
+    milestones: {
+      as: ms.as === 'tag' ? 'tag' : 'type',
+      tag: typeof ms.tag === 'string' && ms.tag.trim() ? ms.tag.trim() : d.milestones.tag,
+    },
   }
 }
+
+/* ------------------------------------------------------------ milestones */
+
+// ClickUp compares tag names without case
+export const sameTag = (a: string, b: string): boolean =>
+  a.trim().toLowerCase() === b.trim().toLowerCase()
 
 /* --------------------------------------------------------------- backlog */
 

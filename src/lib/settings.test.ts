@@ -52,6 +52,13 @@ describe('normalizeSettings', () => {
     expect(s.rules).toEqual({ dueSoonDays: 4, redOverdueShare: 1, amberUnscheduledShare: 0 })
     expect(normalizeSettings({ rules: { dueSoonDays: NaN } }).rules.dueSoonDays).toBe(7)
   })
+
+  it('reads the milestone style, with a blank tag or unknown kind taking the default', () => {
+    expect(normalizeSettings({ milestones: { as: 'tag', tag: ' Kamień ' } }).milestones)
+      .toEqual({ as: 'tag', tag: 'Kamień' })
+    expect(normalizeSettings({ milestones: { as: 'other', tag: '  ' } }).milestones)
+      .toEqual({ as: 'type', tag: 'milestone' })
+  })
 })
 
 describe('backlog', () => {

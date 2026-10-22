@@ -32,6 +32,8 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
   const [dueSoon, setDueSoon] = useState(String(settings.rules.dueSoonDays))
   const [red, setRed] = useState(pct(settings.rules.redOverdueShare))
   const [amber, setAmber] = useState(pct(settings.rules.amberUnscheduledShare))
+  const [msAs, setMsAs] = useState(settings.milestones.as)
+  const [msTag, setMsTag] = useState(settings.milestones.tag)
 
   const keywordList = cleanNames(keywords.split(','))
   const isBacklogName = (name: string) => statuses.some(s => s.toLowerCase() === name.toLowerCase())
@@ -72,6 +74,8 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
     setDueSoon(String(d.rules.dueSoonDays))
     setRed(pct(d.rules.redOverdueShare))
     setAmber(pct(d.rules.amberUnscheduledShare))
+    setMsAs(d.milestones.as)
+    setMsTag(d.milestones.tag)
   }
 
   function save() {
@@ -85,6 +89,8 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
         redOverdueShare: red.trim() === '' ? undefined : Number(red) / 100,
         amberUnscheduledShare: amber.trim() === '' ? undefined : Number(amber) / 100,
       },
+      // A blank tag falls back to the default
+      milestones: { as: msAs, tag: msTag },
     }))
   }
 
@@ -201,6 +207,32 @@ export function SettingsDialog({ settings, knownStatuses, onSave, onClose }: Pro
               </label>
             ))}
             <div className="clickup-modal__hint">Pull and push always include every task.</div>
+          </div>
+        </section>
+
+        <section className="settings__section">
+          <h3 className="settings__heading">ClickUp milestones</h3>
+          <label className="settings__check">
+            <input type="radio" name="set-ms" checked={msAs === 'type'} onChange={() => setMsAs('type')} />
+            Milestone task type (needs the Milestones ClickApp)
+          </label>
+          <label className="settings__check">
+            <input type="radio" name="set-ms" checked={msAs === 'tag'} onChange={() => setMsAs('tag')} />
+            Normal tasks with a tag (Free Forever plan)
+          </label>
+          <div className="clickup-modal__row settings__indent">
+            <label htmlFor="set-ms-tag">Milestone tag</label>
+            <input
+              id="set-ms-tag"
+              value={msTag}
+              onChange={e => setMsTag(e.target.value)}
+              placeholder="milestone"
+              disabled={msAs !== 'tag'}
+            />
+            <div className="clickup-modal__hint">
+              A ClickUp task with this tag is a milestone on the board; the tag itself is not
+              shown. Takes effect on the next Pull / Push, for portfolio lists on their next Refresh.
+            </div>
           </div>
         </section>
 

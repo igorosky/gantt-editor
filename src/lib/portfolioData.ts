@@ -4,9 +4,9 @@
 import type { Assignee, GanttTask } from '../types'
 import { reviveTask } from '../hooks/useTasks'
 import { getAllTasks, type RemoteTask } from './clickup'
-import { mapRemoteTask, remotePreds } from './sync'
+import { mapRemoteTask, remoteMilestones, remotePreds } from './sync'
 import { contentWarningIds } from './warnings'
-import { DEFAULT_DOD_KEYWORDS } from './settings'
+import { DEFAULT_DOD_KEYWORDS, DEFAULT_SETTINGS, type MilestoneStyle } from './settings'
 import { addDays, startOfDay } from './dates'
 
 export interface ProjectRef {
@@ -118,12 +118,14 @@ export interface FetchResult {
 }
 
 // Lists are fetched a few at a time; a failing list (including a 429) is
-// reported on its own and never aborts the others.
+// reported on its own and never aborts the others. `milestones` says how
+// ClickUp marks a milestone (see remoteMilestones).
 export async function fetchProjects(
   token: string,
   listIds: string[],
   onProgress?: (done: number, total: number) => void,
   dodKeywords = DEFAULT_DOD_KEYWORDS,
+  milestones: MilestoneStyle = DEFAULT_SETTINGS.milestones,
   concurrency = 3,
 ): Promise<Record<string, FetchResult>> {
   const out: Record<string, FetchResult> = {}
@@ -134,7 +136,7 @@ export async function fetchProjects(
     while (next < listIds.length) {
       const listId = listIds[next++]
       try {
-        const remote = await getAllTasks(token, listId)
+        const remote = remoteMilestones(await getAllTasks(token, listId), milestones)
         out[listId] = {
           tasks: withParentNames(remote.map(r => toPortfolioTask(r, listId, dodKeywords))),
           listName: remote.find(r => r.list?.name)?.list?.name,

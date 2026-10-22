@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GanttTask } from '../types'
 import type { RemoteTask } from './clickup'
 import { findConflicts } from './conflicts'
-import { pullFromClickUp, pushToClickUp, syncBaseOf, type Overrides } from './sync'
+import {
+  boardMilestones, pullFromClickUp, pushToClickUp, remoteMilestones, syncBaseOf, type Overrides,
+} from './sync'
+import type { MilestoneStyle } from './settings'
 
 const CONFIG = { token: 'pk_test', listId: 'L' }
 const LAST_SYNC = new Date(2026, 9, 10).getTime()
@@ -380,5 +383,141 @@ describe('sync base and overrides', () => {
     )
     expect(patches.get('b')?.syncBase?.deps).toBe('A')
     expect(patches.get('c')?.syncBase?.deps).toBe('Z')
+  })
+})
+
+describe('tag milestones', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const TAG: MilestoneStyle = { as: 'tag', tag: 'milestone' }
+  const TAG_CONFIG = { ...CONFIG, milestones: TAG }
+  const day = new Date(2026, 9, 7)
+
+  it('reads the marker tag as the Milestone type and hides it', () => {
+    const [a, b, c] = remoteMilestones([
+      remote('A', { tags: [{ name: 'MileStone' }, { name: 'x' }] }),
+      remote('B', { tags: [{ name: 'x' }], custom_item_id: 1002 }),
+      // A real Milestone without the tag is a task here
+      remote('C', { custom_item_id: 1 }),
+    ], TAG)
+    expect(a).toMatchObject({ custom_item_id: 1, tags: [{ name: 'x' }] })
+    expect(b).toMatchObject({ custom_item_id: null, tags: [{ name: 'x' }] })
+    expect(c.custom_item_id).toBeNull()
+    const list = [remote('A', { tags: [{ name: 'milestone' }] })]
+    expect(remoteMilestones(list, { as: 'type', tag: 'milestone' })).toBe(list)
+  })
+
+  it('pulls a tagged task as a milestone on its due date', () => {
+    const { tasks } = pullFromClickUp([], remoteMilestones([remote('A', {
+      start_date: ms(new Date(2026, 9, 1)), due_date: ms(day), tags: [{ name: 'milestone' }, { name: 'x' }],
+    })], TAG))
+    expect(tasks[0]).toMatchObject({ type: 'milestone', start: day, end: day, tags: [{ name: 'x' }] })
+    expect(tasks[0].syncBase).toMatchObject({ type: 'Milestone', tags: 'x' })
+  })
+
+  it('writes nothing for a tagged milestone that matches the board', async () => {
+    const calls = stubClickUp()
+    const { entries } = await pushToClickUp(
+      TAG_CONFIG,
+      [local('a', { clickupId: 'A', type: 'milestone', start: day, end: day, tags: [{ name: 'x' }] })],
+      remoteMilestones([remote('A', { due_date: ms(day), tags: [{ name: 'x' }, { name: 'milestone' }] })], TAG),
+    )
+    expect(writes(calls)).toEqual([])
+    expect(entries).toEqual([])
+  })
+
+  it('flips the type through the marker tag, never custom_item_id', async () => {
+    const calls = stubClickUp()
+    const { patches } = await pushToClickUp(
+      TAG_CONFIG,
+      [
+        local('a', { clickupId: 'A', name: 'A2', type: 'milestone', start: day, end: day }),
+        local('b', { clickupId: 'B', type: 'task', start: day, end: day }),
+      ],
+      remoteMilestones([
+        remote('A', { start_date: ms(day), due_date: ms(day) }),
+        remote('B', { due_date: ms(day), tags: [{ name: 'milestone' }] }),
+      ], TAG),
+    )
+    expect(writes(calls)).toEqual([
+      { method: 'PUT', path: '/task/A', query: '', body: { name: 'A2' } },
+      { method: 'POST', path: '/task/A/tag/milestone', query: '', body: undefined },
+      { method: 'DELETE', path: '/task/B/tag/milestone', query: '', body: undefined },
+    ])
+    expect(patches.get('a')?.syncBase?.type).toBe('Milestone')
+    expect(patches.get('b')?.syncBase?.type).toBe('Task')
+  })
+
+  it('leaves the marker alone when only other tags change', async () => {
+    const calls = stubClickUp()
+    await pushToClickUp(
+      TAG_CONFIG,
+      [local('a', { clickupId: 'A', type: 'milestone', start: day, end: day, tags: [{ name: 'x' }] })],
+      remoteMilestones([remote('A', { due_date: ms(day), tags: [{ name: 'milestone' }, { name: 'y' }] })], TAG),
+    )
+    expect(writes(calls)).toEqual([
+      { method: 'POST', path: '/task/A/tag/x', query: '', body: undefined },
+      { method: 'DELETE', path: '/task/A/tag/y', query: '', body: undefined },
+    ])
+  })
+
+  it('creates a milestone as a tagged task', async () => {
+    const calls = stubClickUp()
+    const { patches } = await pushToClickUp(
+      TAG_CONFIG,
+      [local('m', { name: 'M', type: 'milestone', start: day, end: day })],
+      [],
+    )
+    const w = writes(calls)
+    expect(w.map(c => [c.method, c.path])).toEqual([['POST', '/list/L/task'], ['POST', '/task/new1/tag/milestone']])
+    expect(w[0].body).not.toHaveProperty('custom_item_id')
+    expect(patches.get('m')?.syncBase?.type).toBe('Milestone')
+  })
+
+  it('still sends custom_item_id in type mode', async () => {
+    const calls = stubClickUp()
+    await pushToClickUp(CONFIG, [local('m', { name: 'M', type: 'milestone', start: day, end: day })], [])
+    expect(writes(calls)[0].body).toMatchObject({ custom_item_id: 1 })
+  })
+
+  it('records a task when the marker of a new milestone fails, so the next push retries', async () => {
+    const calls = stubClickUp()
+    const ok = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) =>
+      url.includes('/tag/')
+        ? new Response(JSON.stringify({ err: 'Boom' }), { status: 500 })
+        : ok(url, init)))
+    const { patches, entries } = await pushToClickUp(
+      TAG_CONFIG,
+      [local('m', { name: 'M', type: 'milestone', start: day, end: day })],
+      [],
+    )
+    expect(calls.map(c => c.path)).toEqual(['/list/L/task'])
+    expect(entries.map(e => e.kind)).toEqual(['created', 'error'])
+    expect(entries[1].detail).toMatch(/^Milestone tag "milestone" failed/)
+    expect(patches.get('m')).toMatchObject({ clickupId: 'new1', syncBase: { type: 'Task' } })
+  })
+
+  it('turns board rows carrying the marker into milestones', () => {
+    const tasks = [
+      local('a', { start: new Date(2026, 9, 1), end: day, tags: [{ name: 'Milestone' }, { name: 'x' }] }),
+      local('b', { tags: [{ name: 'milestone' }] }),
+      local('c', { tags: [{ name: 'x' }] }),
+    ]
+    const out = boardMilestones(tasks, TAG)
+    expect(out[0]).toMatchObject({ type: 'milestone', start: day, end: day, tags: [{ name: 'x' }] })
+    expect(out[1]).toMatchObject({ type: 'milestone', tags: undefined })
+    expect(out[2]).toBe(tasks[2])
+    expect(boardMilestones([tasks[2]], TAG)).toEqual([tasks[2]])
+    const same = [tasks[2]]
+    expect(boardMilestones(same, TAG)).toBe(same)
+    expect(boardMilestones(tasks, { as: 'type', tag: 'milestone' })).toBe(tasks)
+  })
+
+  it('finds no conflict after a pull in tag mode', () => {
+    const remoteList = remoteMilestones([remote('A', { due_date: ms(day), tags: [{ name: 'milestone' }] })], TAG)
+    const { tasks } = pullFromClickUp([], remoteList)
+    expect(findConflicts('push', tasks, remoteList, LAST_SYNC)).toEqual([])
+    expect(findConflicts('pull', tasks, remoteList, LAST_SYNC)).toEqual([])
   })
 })

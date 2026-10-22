@@ -114,4 +114,14 @@ describe('fetchProjects', () => {
     expect(calls.every(c => c.method === 'GET')).toBe(true)
     expect(progress).toEqual([0, 1, 2])
   })
+
+  it('reads tag milestones when the settings say so', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      tasks: [remote({ id: 'a', due_date: '1791324000000', tags: [{ name: 'milestone' }, { name: 'x' }] })],
+    }), { status: 200 })))
+    const out = await fetchProjects('pk_x', ['l'], undefined, undefined, { as: 'tag', tag: 'milestone' })
+    expect(out.l.tasks?.[0]).toMatchObject({ type: 'milestone', tags: [{ name: 'x' }] })
+    const plain = await fetchProjects('pk_x', ['l'])
+    expect(plain.l.tasks?.[0]).toMatchObject({ type: 'task' })
+  })
 })

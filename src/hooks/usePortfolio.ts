@@ -4,6 +4,7 @@ import {
   demoProjects, deserializeCache, fetchProjects, fromBoardTask, projectColor, serializeCache, withParentNames,
   type PortfolioCache, type PortfolioProject, type ProjectRef,
 } from '../lib/portfolioData'
+import type { MilestoneStyle } from '../lib/settings'
 
 const CONFIG_KEY = 'portfolio-config'
 const CACHE_KEY = 'portfolio-cache'
@@ -45,6 +46,7 @@ export interface Progress {
 // cache, so unsynced edits show up too.
 export function usePortfolio(
   boardTasks: GanttTask[], cu: ClickUpConfig | null, boardList: string | undefined, dodKeywords: string[],
+  milestones: MilestoneStyle,
 ) {
   const [config, setConfig] = useState<PortfolioConfig>(loadConfig)
   const [cache, setCache] = useState<PortfolioCache>(loadCache)
@@ -115,7 +117,7 @@ export function usePortfolio(
     if (ids.length === 0) return
     setProgress({ done: 0, total: ids.length })
     try {
-      const res = await fetchProjects(cu.token, ids, (done, total) => setProgress({ done, total }), dodKeywords)
+      const res = await fetchProjects(cu.token, ids, (done, total) => setProgress({ done, total }), dodKeywords, milestones)
       const now = new Date().toISOString()
       setCache(prev => {
         const next = { ...prev }
@@ -138,7 +140,7 @@ export function usePortfolio(
     } finally {
       setProgress(null)
     }
-  }, [cu?.token, progress, config.refs, boardListId, dodKeywords])
+  }, [cu?.token, progress, config.refs, boardListId, dodKeywords, milestones])
 
   const loadDemo = useCallback(() => setDemo(demoProjects(new Date())), [])
   const exitDemo = useCallback(() => setDemo(null), [])

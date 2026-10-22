@@ -3,6 +3,7 @@ import { buildTree, ancestors, TOP_LEVEL_BLOCKED } from './tree'
 import { fmtDate } from './dates'
 import { clipText } from './syncLog'
 import type { DeletionCandidate } from './deletions'
+import { DEFAULT_SETTINGS, sameTag, type MilestoneStyle } from './settings'
 import {
   addDependency,
   addTagToTask,
@@ -30,6 +31,37 @@ import {
 // syncBase, the state both sides agree on, for the next three-way check.
 
 const isRemoteMilestone = (r: RemoteTask): boolean => r.custom_item_id === MILESTONE_ITEM_ID
+
+// The list as the board reads it. With tag milestones the marker tag stands in
+// for ClickUp's Milestone type: it sets custom_item_id and leaves the tags, so
+// every reader (pull, conflicts, push diff, portfolio) sees one picture. A
+// Milestone-type task without the tag reads as a task.
+export function remoteMilestones(remote: RemoteTask[], style: MilestoneStyle): RemoteTask[] {
+  if (style.as !== 'tag') return remote
+  return remote.map(r => {
+    const isMs = (r.tags ?? []).some(t => sameTag(t.name, style.tag))
+    return {
+      ...r,
+      custom_item_id: isMs ? MILESTONE_ITEM_ID : null,
+      tags: r.tags?.filter(t => !sameTag(t.name, style.tag)),
+    }
+  })
+}
+
+// With tag milestones, board rows carrying the marker tag (pulled before the
+// setting changed) become milestones and drop it. The same array when there
+// is nothing to change.
+export function boardMilestones(tasks: GanttTask[], style: MilestoneStyle): GanttTask[] {
+  if (style.as !== 'tag') return tasks
+  let changed = false
+  const out = tasks.map(t => {
+    if (!t.tags?.some(x => sameTag(x.name, style.tag))) return t
+    changed = true
+    const tags = t.tags.filter(x => !sameTag(x.name, style.tag))
+    return normalizeMilestone({ ...t, type: 'milestone', tags: tags.length ? tags : undefined })
+  })
+  return changed ? out : tasks
+}
 
 const remotePriority = (r: RemoteTask): GanttTask['priority'] =>
   r.priority?.orderindex ? (Number(r.priority.orderindex) as 1 | 2 | 3 | 4) : undefined
@@ -487,13 +519,15 @@ export interface DeletionDecision {
 // end up with the decided values. Tasks deleted on the board are deleted in
 // ClickUp last, and only those the user confirmed (`deletions`).
 export async function pushToClickUp(
-  config: { token: string; listId: string },
+  config: { token: string; listId: string; milestones?: MilestoneStyle },
   boardTasks: GanttTask[],
   remote: RemoteTask[],
   overrides?: Overrides,
   deletions: DeletionDecision[] = [],
 ): Promise<PushResult> {
-  const { token, listId } = config
+  const { token, listId, milestones = DEFAULT_SETTINGS.milestones } = config
+  const byTag = milestones.as === 'tag'
+  const isMarker = (name: string) => byTag && sameTag(name, milestones.tag)
   const entries: SyncLogEntry[] = []
   const patches = new Map<string, Partial<GanttTask>>()
   const patch = (id: string, p: Partial<GanttTask>) => patches.set(id, { ...patches.get(id), ...p })
@@ -542,8 +576,8 @@ export async function pushToClickUp(
     const body: Partial<UpdateTaskBody> = {}
     if (keys.has('name')) body.name = l.name
     // Only sent on a real type flip, so other custom task types in the
-    // workspace are never overwritten
-    if (keys.has('type')) body.custom_item_id = l.type === 'milestone' ? MILESTONE_ITEM_ID : null
+    // workspace are never overwritten. Tag milestones flip the marker tag.
+    if (keys.has('type') && !byTag) body.custom_item_id = l.type === 'milestone' ? MILESTONE_ITEM_ID : null
     if (keys.has('start')) {
       body.start_date = l.start ? toClickUpDate(l.start) : null
       if (l.start) body.start_date_time = false
@@ -563,16 +597,21 @@ export async function pushToClickUp(
         rem: [...remoteIds].filter(id => !localIds.has(id)),
       }
     }
-    const localTags = new Set(tagNames(l))
+    const localTags = new Set(tagNames(l).filter(n => !isMarker(n)))
     const remoteTags = new Set((r.tags ?? []).map(t => t.name))
     try {
       if (Object.keys(body).length) seen(await updateTask(token, r.id, body))
-      if (keys.has('tags')) {
-        await Promise.all([
-          ...[...localTags].filter(n => !remoteTags.has(n)).map(n => addTagToTask(token, r.id, n)),
-          ...[...remoteTags].filter(n => !localTags.has(n)).map(n => removeTagFromTask(token, r.id, n)),
-        ])
-      }
+      await Promise.all([
+        ...(keys.has('type') && byTag
+          ? [l.type === 'milestone' ? addTagToTask(token, r.id, milestones.tag) : removeTagFromTask(token, r.id, milestones.tag)]
+          : []),
+        ...(keys.has('tags')
+          ? [
+              ...[...localTags].filter(n => !remoteTags.has(n)).map(n => addTagToTask(token, r.id, n)),
+              ...[...remoteTags].filter(n => !localTags.has(n)).map(n => removeTagFromTask(token, r.id, n)),
+            ]
+          : []),
+      ])
       fieldBase.set(l.id, agreed)
       entries.push({ kind: 'updated', task: l.name, taskId: l.id, clickupId: r.id, changes: pushed(diff) })
     } catch (e) {
@@ -590,7 +629,7 @@ export async function pushToClickUp(
       const ids = assigneeIds(u)
       const created = await createTask(token, listId, {
         name: u.name,
-        ...(u.type === 'milestone' ? { custom_item_id: MILESTONE_ITEM_ID } : {}),
+        ...(u.type === 'milestone' && !byTag ? { custom_item_id: MILESTONE_ITEM_ID } : {}),
         ...(u.start ? { start_date: toClickUpDate(u.start), start_date_time: false } : {}),
         ...(u.end ? { due_date: toClickUpDate(u.end), due_date_time: false } : {}),
         ...(u.priority !== undefined ? { priority: u.priority } : {}),
@@ -608,8 +647,19 @@ export async function pushToClickUp(
         kind: 'created', task: u.name, taskId: u.id, clickupId: created.id,
         detail: parent ? `subtask of "${nameOf.get(parentLocal!)}"` : undefined,
       })
+      // A milestone whose marker failed is a task in ClickUp, so the next push
+      // sends the type again
+      let type = u.type
+      if (u.type === 'milestone' && byTag) {
+        try {
+          await addTagToTask(token, created.id, milestones.tag)
+        } catch (e) {
+          type = 'task'
+          entries.push({ kind: 'error', task: u.name, taskId: u.id, clickupId: created.id, detail: `Milestone tag "${milestones.tag}" failed: ${errText(e)}` })
+        }
+      }
       const tags: GanttTask['tags'] = []
-      for (const tag of u.tags ?? []) {
+      for (const tag of (u.tags ?? []).filter(x => !isMarker(x.name))) {
         try {
           await addTagToTask(token, created.id, tag.name)
           tags.push(tag)
@@ -618,7 +668,7 @@ export async function pushToClickUp(
         }
       }
       // The create body has no status, so ClickUp's default is the agreed one
-      fieldBase.set(u.id, syncBaseOf({ ...u, ...copyFields(mapRemoteTask(created, u.id), ['status']), tags }))
+      fieldBase.set(u.id, syncBaseOf({ ...u, ...copyFields(mapRemoteTask(created, u.id), ['status']), type, tags }))
     } catch (e) {
       entries.push({ kind: 'error', task: u.name, taskId: u.id, detail: `Create failed: ${errText(e)}` })
     }

@@ -25,7 +25,9 @@ import { useSettings } from './hooks/useSettings'
 import { withoutBacklog } from './lib/settings'
 import type { WorkloadMetric } from './lib/workload'
 import { applyFilters, getAllSuccessors } from './utils'
-import { latestUpdate, pullFromClickUp, pushToClickUp, type DeletionDecision } from './lib/sync'
+import {
+  boardMilestones, latestUpdate, pullFromClickUp, pushToClickUp, remoteMilestones, type DeletionDecision,
+} from './lib/sync'
 import { pendingCuids, planDeletions, type DeletionCandidate } from './lib/deletions'
 import { findConflicts, resolveConflicts, type Resolution, type SyncConflict } from './lib/conflicts'
 import { getAllTasks, type RemoteTask } from './lib/clickup'
@@ -145,7 +147,9 @@ export default function App() {
     [criticalOn, criticalScope, tasks, filteredTasks],
   )
   const [route, navigate] = useHashRoute()
-  const portfolio = usePortfolio(tasks, config, board.listId, settings.warnings.dodKeywords)
+  // The ClickUp tag that marks a milestone, when milestones are stored that way
+  const milestoneTag = settings.milestones.as === 'tag' ? settings.milestones.tag : undefined
+  const portfolio = usePortfolio(tasks, config, board.listId, settings.warnings.dodKeywords, settings.milestones)
   // Status names offered as backlog candidates in Settings
   const knownStatuses = useMemo(() => {
     const names = new Set<string>()
@@ -231,7 +235,8 @@ export default function App() {
         clock = latestUpdate(remote)
       } else {
         const res = await pushToClickUp(
-          { token: config.token, listId: board.listId }, tasksRef.current, remote, resolved?.overrides, deletions,
+          { token: config.token, listId: board.listId, milestones: settings.milestones },
+          tasksRef.current, remote, resolved?.overrides, deletions,
         )
         // Patch by id, so edits made while the push ran survive
         setTasks(prev => prev.map(t => {
@@ -256,19 +261,25 @@ export default function App() {
     } finally {
       setSyncBusy(null)
     }
-  }, [config, board, boards.patch, setTasks, syncLog.addRun, dropPending])
+  }, [config, board, settings.milestones, boards.patch, setTasks, syncLog.addRun, dropPending])
 
   // Fetches the list, then applies straight away unless the operation would
   // overwrite changes made on the other side, which the user resolves first,
-  // or a push would delete tasks deleted on the board, which the user confirms
+  // or a push would delete tasks deleted on the board, which the user confirms.
+  // With tag milestones both sides are read through the marker tag first.
   const startSync = useCallback(async (direction: SyncDirection) => {
     if (!config?.token || !board.listId || syncBusy) return
     setSyncBusy(direction)
     const startedAt = new Date().toISOString()
     const t0 = performance.now()
+    const marked = boardMilestones(tasksRef.current, settings.milestones)
+    if (marked !== tasksRef.current) {
+      tasksRef.current = marked
+      setTasks(prev => boardMilestones(prev, settings.milestones))
+    }
     let remote: RemoteTask[]
     try {
-      remote = await getAllTasks(config.token, board.listId)
+      remote = remoteMilestones(await getAllTasks(config.token, board.listId), settings.milestones)
     } catch (e) {
       syncLog.addRun({
         direction, at: startedAt, durationMs: performance.now() - t0, entries: [],
@@ -291,7 +302,7 @@ export default function App() {
       return
     }
     await applySync(direction, remote, startedAt, fetchMs)
-  }, [config, board, syncBusy, applySync, syncLog.addRun, prunePendingFor])
+  }, [config, board, syncBusy, settings.milestones, setTasks, applySync, syncLog.addRun, prunePendingFor])
 
   // A list opened for the first time (linked, never synced, no tasks) pulls
   // straight away; a failed first pull tries again on the next visit
@@ -785,6 +796,7 @@ export default function App() {
             clickupTeamId={config?.teamId}
             clickupListId={board.listId}
             clickupSpaceId={board.spaceId}
+            milestoneTag={milestoneTag}
           />
         ) : null
       })()}
@@ -801,6 +813,7 @@ export default function App() {
           clickupTeamId={config?.teamId}
           clickupListId={board.listId}
           clickupSpaceId={board.spaceId}
+          milestoneTag={milestoneTag}
         />
       )}
     </div>

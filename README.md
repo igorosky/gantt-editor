@@ -8,7 +8,7 @@ A browser-based Gantt chart editor with two-way ClickUp sync, dependency trackin
 
 - **Split-panel editor**: task list on the left, Gantt chart on the right, resizable divider between them.
 - **Dateless tasks**: tasks can exist without start/end dates and still show up in the list.
-- **Milestones**: zero-duration markers (diamond glyph) alongside regular date-ranged tasks.
+- **Milestones**: zero-duration markers (diamond glyph) alongside regular date-ranged tasks. In ClickUp they are stored as the Milestone task type, or (Settings, for the Free Forever plan without the Milestones ClickApp) as normal tasks with a configurable tag, `milestone` by default.
 - **Subtasks**: nest tasks to any depth and collapse / expand them in both panels. Add, indent (Tab), outdent (Shift+Tab), move or detach them from the row menu, by drag and drop (drop on the middle of a row to nest) or from the task popup. Dragging a parent bar moves its subtasks along, and a thin line under the parent shows where its subtasks lie.
 - **Dependencies**: click-to-connect arrows between tasks, with drag/resize propagation to successors.
 - **Critical path**: toggle highlighting of the longest duration-weighted dependency chain, scoped to the whole project or just the current view.
