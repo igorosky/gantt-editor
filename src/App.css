@@ -497,6 +497,21 @@
   box-shadow: inset 3px 0 0 var(--critical);
 }
 
+/* Status color stripe, in the row padding next to the critical inset (0-3px),
+   so it shifts nothing. The inset edge keeps white / pale statuses visible. */
+.task-row {
+  position: relative;
+}
+.task-row__status {
+  position: absolute;
+  left: 5px;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
 .task-row__name {
   flex: 1;
   min-width: 0;
@@ -2231,6 +2246,60 @@
   cursor: pointer;
 }
 .tdp-footer__create:hover { background: var(--accent-strong); }
+
+/* "Discard this new task?" asked over the draft popup */
+.tdp-modal { position: relative; }
+.tdp-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+  animation: tdp-fade-in 0.12s ease both;
+}
+@keyframes tdp-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.tdp-confirm__card {
+  width: min(360px, 86%);
+  padding: 18px 20px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.tdp-confirm__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tdp-confirm__text {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-mid);
+}
+.tdp-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* Darker than --danger so the white label keeps 4.5:1 */
+.tdp-confirm__discard {
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #a61e1e;
+  background: #c92a2a;
+  color: #fff;
+  cursor: pointer;
+}
+.tdp-confirm__discard:hover { background: #a61e1e; }
 
 .tdp-status-badge--empty {
   background: var(--surface-3);

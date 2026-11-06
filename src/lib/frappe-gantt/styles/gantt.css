@@ -287,7 +287,8 @@
     }
 
     & .bar-label {
-        fill: var(--g-text-dark);
+        /* --g-bar-text: local addition, set per label from task.text_color */
+        fill: var(--g-bar-text, var(--g-text-dark));
         dominant-baseline: central;
         font-family: Helvetica;
         font-size: 13px;
@@ -341,6 +342,14 @@
 
     & .bar-wrapper.context {
         opacity: 0.45;
+    }
+
+    /* Local addition: a status color too close to the row background gets an
+       outline so the bar / diamond does not vanish (critical and selected
+       strokes are !important in App.css and still win) */
+    & .bar-wrapper.status-faint .bar {
+        stroke: #8a8a8a;
+        stroke-width: 1;
     }
 
     & .bar-wrapper {

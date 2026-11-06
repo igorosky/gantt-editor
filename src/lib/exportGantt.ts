@@ -9,6 +9,7 @@
 import type { GanttTask } from '../types'
 import { isMilestone } from '../utils'
 import { edgeKey } from './criticalPath'
+import { parseColor, readableTextColor, toHex } from './color'
 import {
   DEFAULT_CALENDAR, MONTHS, addDays, autoUnit, daysBetween, fmtDate, isWorkday, startOfDay,
   startOfMonth, startOfWeek, unitStarts, type Calendar, type TimeUnit,
@@ -264,28 +265,17 @@ function esc(s: string): string {
 }
 
 function darken(color: string, amount = 0.16): string {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())
-  if (!m) return color
-  let hex = m[1]
-  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
-  const n = parseInt(hex, 16)
-  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-    .map(v => Math.max(0, Math.round(v * (1 - amount))))
-    .map(v => v.toString(16).padStart(2, '0'))
-  return `#${ch.join('')}`
+  const c = parseColor(color)
+  if (!c) return color
+  return toHex({ r: c.r * (1 - amount), g: c.g * (1 - amount), b: c.b * (1 - amount) })
 }
 
 // Opaque mix with white, for bands that must cover the grid below them
 function tint(color: string, amount = 0.86): string {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())
-  if (!m) return C.headerBg
-  let hex = m[1]
-  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
-  const n = parseInt(hex, 16)
-  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-    .map(v => Math.round(v + (255 - v) * amount))
-    .map(v => v.toString(16).padStart(2, '0'))
-  return `#${ch.join('')}`
+  const c = parseColor(color)
+  if (!c) return C.headerBg
+  const mix = (v: number) => v + (255 - v) * amount
+  return toHex({ r: mix(c.r), g: mix(c.g), b: mix(c.b) })
 }
 
 /* ------------------------------------------------------------- svg emitters */
@@ -619,12 +609,14 @@ export function buildGanttSvg(rows: ExportRow[], opts: ExportOptions): BuiltSvg 
       `stroke-width="${crit ? 2 : 1}"/>`,
     )
 
-    // chevrons mark an edge that runs outside the exported window
+    // chevrons mark an edge that runs outside the exported window, drawn in
+    // black or white so they stay visible on pale status colors too
+    const mark = readableTextColor(fill)
     if (rawX0 < 0) {
-      parts.push(`<path d="M ${r(cx(x0) + 7)} ${r(top + 3)} L ${r(cx(x0) + 3)} ${r(top + BAR_H / 2)} L ${r(cx(x0) + 7)} ${r(top + BAR_H - 3)}" fill="none" stroke="#fff" stroke-width="1.4"/>`)
+      parts.push(`<path d="M ${r(cx(x0) + 7)} ${r(top + 3)} L ${r(cx(x0) + 3)} ${r(top + BAR_H / 2)} L ${r(cx(x0) + 7)} ${r(top + BAR_H - 3)}" fill="none" stroke="${mark}" stroke-width="1.4" data-clip="left"/>`)
     }
     if (rawX1 > chartW) {
-      parts.push(`<path d="M ${r(cx(x1) - 7)} ${r(top + 3)} L ${r(cx(x1) - 3)} ${r(top + BAR_H / 2)} L ${r(cx(x1) - 7)} ${r(top + BAR_H - 3)}" fill="none" stroke="#fff" stroke-width="1.4"/>`)
+      parts.push(`<path d="M ${r(cx(x1) - 7)} ${r(top + 3)} L ${r(cx(x1) - 3)} ${r(top + BAR_H / 2)} L ${r(cx(x1) - 7)} ${r(top + BAR_H - 3)}" fill="none" stroke="${mark}" stroke-width="1.4" data-clip="right"/>`)
     }
 
     geoms.set(t.id, {

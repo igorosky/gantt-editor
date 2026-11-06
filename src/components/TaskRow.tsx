@@ -5,6 +5,7 @@ import { GANTT_ROW_HEIGHT } from '../constants'
 import { isMilestone } from '../utils'
 import { getTaskWarnings } from '../lib/warnings'
 import { daysLate } from '../lib/portfolio'
+import { statusBarStyle } from '../lib/color'
 import type { Settings } from '../lib/settings'
 import type { DropPosition, TreeRow } from '../lib/tree'
 import { DatePicker } from './DatePicker'
@@ -154,6 +155,7 @@ export function TaskRow({
   const warnings = getTaskWarnings(task, settings)
   const late = daysLate(task, new Date())
   const lateNote = late ? ` - overdue by ${late} day${late === 1 ? '' : 's'}` : ''
+  const look = settings.board.statusColors ? statusBarStyle(task.statusColor) : null
 
   const menu: MenuItem[] = [
     { label: 'Add subtask', onClick: onAddSubtask },
@@ -186,6 +188,15 @@ export function TaskRow({
       onDrop={e => { e.preventDefault(); onDrop() }}
       onDragEnd={onDragEnd}
     >
+      {look && (
+        <span
+          className="task-row__status"
+          style={{ background: look.fill }}
+          title={`Status: ${task.status ?? 'unknown'}`}
+          aria-label={`Status: ${task.status ?? 'unknown'}`}
+          role="img"
+        />
+      )}
       <span className="task-row__grip" aria-hidden="true">⠿</span>
 
       {depth > 0 && <span className="task-row__indent" style={{ width: depth * INDENT }} aria-hidden="true" />}

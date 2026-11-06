@@ -67,6 +67,14 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ milestones: { as: 'other', tag: '  ' } }).milestones)
       .toEqual({ as: 'type', tag: 'milestone' })
   })
+
+  it('colors tasks by status unless switched off', () => {
+    expect(DEFAULT_SETTINGS.board.statusColors).toBe(true)
+    expect(normalizeSettings({}).board.statusColors).toBe(true)
+    expect(normalizeSettings({ board: { statusColors: false } }).board.statusColors).toBe(false)
+    expect(normalizeSettings({ board: { statusColors: 'no' } }).board.statusColors).toBe(true)
+    expect(normalizeSettings({ board: 7 }).board.statusColors).toBe(true)
+  })
 })
 
 describe('backlog', () => {

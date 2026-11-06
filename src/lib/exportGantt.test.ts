@@ -45,6 +45,18 @@ describe('buildGanttSvg', () => {
     expect(buildGanttSvg(rows, { ...OPTS, sectionToggles: true }).body).toContain('cursor="pointer"')
   })
 
+  it('fills bars with the status color and keeps the clip chevrons visible on it', () => {
+    // runs past both ends of the window: two chevrons
+    const long = { start: day(-20), end: day(30) }
+    const chevrons = (statusColor: string) => {
+      const body = buildGanttSvg(taskRows([task('a', { ...long, statusColor })]), OPTS).body
+      expect(body).toContain(`fill="${statusColor}"`)
+      return [...body.matchAll(/stroke="([^"]+)"[^>]*data-clip=/g)].map(m => m[1])
+    }
+    expect(chevrons('#d3d3d3')).toEqual(['#000000', '#000000'])
+    expect(chevrons('#1f3b8a')).toEqual(['#ffffff', '#ffffff'])
+  })
+
   it('marks a repeated header and a project without dates', () => {
     const built = buildGanttSvg([{ ...section('A', { name: 'Web' }), cont: true } as ExportRow], OPTS)
     expect(built.body).toContain('Web (cont.)')

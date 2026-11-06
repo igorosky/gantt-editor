@@ -8,6 +8,7 @@ import {
   buildTree, descendants, dragClosure, subtreeSpan, type TreeRow,
 } from '../lib/tree'
 import { daysBetween, isoDay, shiftDays, type Calendar } from '../lib/dates'
+import { statusBarStyle } from '../lib/color'
 
 // Column layout of the rendered chart, for widgets drawn in step with it
 export interface GanttGeometry {
@@ -46,6 +47,7 @@ interface Props {
   loadStripOn: boolean
   onToggleLoadStrip: () => void
   calendar: Calendar
+  statusColors: boolean // fill bars with the task's status color
 }
 
 export function GanttPanel({
@@ -66,6 +68,7 @@ export function GanttPanel({
   loadStripOn,
   onToggleLoadStrip,
   calendar,
+  statusColors,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -217,18 +220,23 @@ export function GanttPanel({
       const deps = (t.dependencies ?? []).filter(d => barIds.has(d)).join(',')
       const row = meta.get(t.id)
       const isParent = !!row?.childCount
+      // Status color: inline fill (beats the milestone / parent CSS fills) and
+      // a label color with enough contrast on it
+      const look = statusColors ? statusBarStyle(t.statusColor) : null
       // custom_class is a space-joined token list, read by the fork's Bar.refresh
       const classes = [
         isMilestone(t) ? 'milestone' : '',
         isParent ? 'parent' : '',
         row?.context ? 'context' : '',
         criticalIds.has(t.id) ? 'critical' : '',
+        look?.faint ? 'status-faint' : '',
       ].filter(Boolean).join(' ')
       // Subtasks (with bars) move along when the parent is dragged
       const dragWith = isParent ? descendants(t.id, tree).map(d => d.id).filter(id => barIds.has(id)) : []
       const extra = {
         ...(classes ? { custom_class: classes } : {}),
         ...(dragWith.length ? { _drag_with: dragWith } : {}),
+        ...(look ? { color: look.fill, text_color: look.text } : {}),
       }
       if (isMilestone(t)) {
         // A milestone carries a single date; it is drawn as a diamond by the
@@ -362,7 +370,7 @@ export function GanttPanel({
       applyCriticalArrows()
       emitGeometry()
     }
-  }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount, statusColors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Week start / working days changed in Settings: re-render the columns in
   // place (not through update_options, which would reset options such as

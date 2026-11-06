@@ -1,7 +1,8 @@
 // User settings: which task warnings apply, the week layout, which statuses
-// count as backlog and where backlog tasks are left out, and the portfolio
-// thresholds. Pure; the defaults reproduce the behaviour from before settings
-// existed. Persisted by hooks/useSettings.
+// count as backlog and where backlog tasks are left out, the portfolio
+// thresholds and the board look. Pure; the defaults reproduce the behaviour
+// from before settings existed, except board.statusColors (on). Persisted by
+// hooks/useSettings.
 
 import type { GanttTask } from '../types'
 import { DEFAULT_CALENDAR, type Calendar } from './dates'
@@ -46,6 +47,10 @@ export interface Settings {
     amberUnscheduledShare: number
   }
   milestones: MilestoneStyle
+  board: {
+    // Gantt bars filled with the task's status color, a stripe in the task list
+    statusColors: boolean
+  }
 }
 
 export const DEFAULT_DOD_KEYWORDS = ['DoD', 'Definition of Done']
@@ -70,6 +75,8 @@ export const DEFAULT_SETTINGS: Settings = {
     amberUnscheduledShare: 0.25,
   },
   milestones: { as: 'type', tag: 'milestone' },
+  // On by default, unlike the rest: added later as a new look, not a rule
+  board: { statusColors: true },
 }
 
 /* ------------------------------------------------------------- normalize */
@@ -115,6 +122,7 @@ export function normalizeSettings(raw: unknown): Settings {
   const inc = isObj(b.include) ? b.include : {}
   const ru = isObj(r.rules) ? r.rules : {}
   const ms = isObj(r.milestones) ? r.milestones : {}
+  const bd = isObj(r.board) ? r.board : {}
 
   const keywords = cleanNames(w.dodKeywords)
   const workdays = weekdays(c.workdays)
@@ -153,6 +161,9 @@ export function normalizeSettings(raw: unknown): Settings {
     milestones: {
       as: ms.as === 'tag' ? 'tag' : 'type',
       tag: typeof ms.tag === 'string' && ms.tag.trim() ? ms.tag.trim() : d.milestones.tag,
+    },
+    board: {
+      statusColors: bool(bd.statusColors, d.board.statusColors),
     },
   }
 }

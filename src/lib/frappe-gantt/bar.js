@@ -175,13 +175,18 @@ export default class Bar {
             x_coord = this.x + this.image_size + 5;
         }
 
-        createSVG('text', {
+        const $label = createSVG('text', {
             x: x_coord,
             y: this.y + this.height / 2,
             innerHTML: this.task.name,
             class: 'bar-label',
             append_to: this.bar_group,
         });
+        // Local addition: text color for a label drawn on a task.color fill,
+        // picked by the host for contrast. gantt.css reads it while the label
+        // sits inside the bar; a .big label (outside) keeps the theme color.
+        if (this.task.text_color)
+            $label.style.setProperty('--g-bar-text', this.task.text_color);
         // labels get BBox in the next tick
         requestAnimationFrame(() => this.update_label_position());
     }

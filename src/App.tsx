@@ -602,7 +602,7 @@ export default function App() {
           className="app__settings-btn"
           onClick={() => setAppSettingsOpen(true)}
           type="button"
-          title="Warnings, calendar, backlog and portfolio rules"
+          title="Board colors, warnings, calendar, backlog and portfolio rules"
         >
           Settings
         </button>
@@ -685,6 +685,7 @@ export default function App() {
             loadStripOn={loadStripOn}
             onToggleLoadStrip={() => setLoadStripOn(v => !v)}
             calendar={settings.calendar}
+            statusColors={settings.board.statusColors}
           />
         </div>
       </div>
@@ -810,6 +811,7 @@ export default function App() {
       })()}
       {newTaskDraft && (
         <TaskDetailPopup
+          key={newTaskDraft.id}
           task={newTaskDraft}
           allTasks={tasks}
           onClose={() => setNewTaskDraft(null)}

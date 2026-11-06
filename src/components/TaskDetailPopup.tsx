@@ -6,6 +6,7 @@ import { buildTree, canBecomeTopLevel, subtreeSpan, TOP_LEVEL_BLOCKED } from '..
 import { isDone } from '../lib/portfolio'
 import { sameTag } from '../lib/settings'
 import { fmtShort, startOfDay } from '../lib/dates'
+import { draftChanged } from '../lib/draft'
 import { AssigneePicker } from './AssigneePicker'
 import { TagPicker } from './TagPicker'
 import { DatePicker } from './DatePicker'
@@ -279,7 +280,10 @@ export function TaskDetailPopup({
   const [tagsLoading, setTagsLoading] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
   const [parentPickerOpen, setParentPickerOpen] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  // The draft as it was opened (App remounts the popup for every new draft)
+  const initialRef = useRef(task)
 
   const tree = useMemo(() => buildTree(allTasks), [allTasks])
   const parent = task.parentId ? tree.byId.get(task.parentId) : undefined
@@ -299,14 +303,44 @@ export function TaskDetailPopup({
     setDescDraft(task.description ?? '')
   }, [task.id, task.name, task.description])
 
+  // A new task that holds anything entered (also text not yet committed by a
+  // blur) asks before it is thrown away. An existing task saves every edit as
+  // it is made, so it closes at once.
+  const dirty = !!isCreateMode && (
+    draftChanged(initialRef.current, task)
+    || nameDraft.trim() !== task.name.trim()
+    || descDraft.trim() !== (task.description ?? '').trim()
+  )
+
+  const requestClose = () => {
+    if (dirty) setConfirmDiscard(true)
+    else onClose()
+  }
+  const requestCloseRef = useRef(requestClose)
+  requestCloseRef.current = requestClose
+
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // Escape on the question means "keep editing"
+      if (confirmDiscard) { setConfirmDiscard(false); return }
       const tag = (document.activeElement as HTMLElement)?.tagName
-      if (e.key === 'Escape' && tag !== 'INPUT' && tag !== 'TEXTAREA') onClose()
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA') requestCloseRef.current()
     }
     document.addEventListener('keydown', fn)
     return () => document.removeEventListener('keydown', fn)
-  }, [onClose])
+  }, [confirmDiscard])
+
+  // Reloading or closing the tab would lose the draft as well
+  useEffect(() => {
+    if (!dirty) return
+    const fn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', fn)
+    return () => window.removeEventListener('beforeunload', fn)
+  }, [dirty])
 
   const deps = (task.dependencies ?? [])
     .map(id => allTasks.find(t => t.id === id))
@@ -409,7 +443,7 @@ export function TaskDetailPopup({
   const ms = isMilestone(task)
 
   return (
-    <div className="tdp-overlay" onClick={onClose}>
+    <div className="tdp-overlay" onClick={requestClose}>
       <div className="tdp-modal" role="dialog" aria-modal="true" aria-label={`Task details: ${task.name}`} onClick={e => e.stopPropagation()}>
 
         {/* Top bar */}
@@ -431,7 +465,7 @@ export function TaskDetailPopup({
               ↗
             </a>
           )}
-          <button className="tdp-iconbtn tdp-iconbtn--close" onClick={onClose} title="Close (Esc)" type="button">
+          <button className="tdp-iconbtn tdp-iconbtn--close" onClick={requestClose} title="Close (Esc)" type="button">
             ×
           </button>
         </div>
@@ -677,7 +711,7 @@ export function TaskDetailPopup({
         </div>
         {isCreateMode && (
           <div className="tdp-footer">
-            <button type="button" className="tdp-footer__cancel" onClick={onClose}>Cancel</button>
+            <button type="button" className="tdp-footer__cancel" onClick={requestClose}>Cancel</button>
             <button
               type="button"
               className="tdp-footer__create"
@@ -689,6 +723,38 @@ export function TaskDetailPopup({
             >
               {ms ? 'Create milestone' : 'Create task'}
             </button>
+          </div>
+        )}
+        {confirmDiscard && (
+          <div className="tdp-confirm" onClick={() => setConfirmDiscard(false)}>
+            <div
+              className="tdp-confirm__card"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="tdp-confirm-title"
+              aria-describedby="tdp-confirm-text"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 id="tdp-confirm-title" className="tdp-confirm__title">
+                Discard this new {ms ? 'milestone' : 'task'}?
+              </h3>
+              <p id="tdp-confirm-text" className="tdp-confirm__text">
+                It has not been created yet. What you entered will be lost.
+              </p>
+              <div className="tdp-confirm__actions">
+                <button
+                  type="button"
+                  className="tdp-footer__cancel"
+                  onClick={() => setConfirmDiscard(false)}
+                  autoFocus
+                >
+                  Keep editing
+                </button>
+                <button type="button" className="tdp-confirm__discard" onClick={onClose}>
+                  Discard
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
