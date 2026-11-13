@@ -4,6 +4,7 @@ import type { Person } from '../components/Avatar'
 
 const KEY = (teamId: string) => `clickup-people@${teamId}`
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
+const NO_PEOPLE: Person[] = []
 
 interface Cached {
   fetchedAt: number
@@ -50,7 +51,9 @@ export function usePeople(token: string | undefined, teamId: string | undefined)
 
   useEffect(() => {
     if (!token || !teamId) {
-      setState({ teamId: '', members: [], loading: false, error: null })
+      setState(s => (s.teamId || s.members.length || s.loading || s.error
+        ? { teamId: '', members: NO_PEOPLE, loading: false, error: null }
+        : s))
       return
     }
     const cached = readCache(teamId)
@@ -72,7 +75,8 @@ export function usePeople(token: string | undefined, teamId: string | undefined)
     return () => { live = false }
   }, [token, teamId, nonce])
 
-  const list = state.teamId === teamId ? state.members : []
+  // A stable empty list: the gantt refreshes when the people map changes
+  const list = state.teamId === teamId ? state.members : NO_PEOPLE
   const byId = useMemo(() => new Map(list.map(p => [p.id, p])), [list])
   const reload = useCallback(() => setNonce(n => n + 1), [])
   return { list, byId, loading: state.loading, error: state.error, reload }

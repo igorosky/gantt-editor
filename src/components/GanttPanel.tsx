@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useRef, useState } from 'react'
+import React, { useContext, useEffect, useReducer, useRef, useState } from 'react'
 import FrappeGantt from 'frappe-gantt'
 import type FrappeGanttNS from 'frappe-gantt'
 import type { CriticalScope, GanttTask } from '../types'
@@ -14,6 +14,7 @@ import { modKey } from '../lib/keys'
 import { reapplyHover, setHover } from '../lib/hover'
 import type { Settings } from '../lib/settings'
 import { BarTooltip } from './BarTooltip'
+import { PeopleContext, avatarColor, initials } from './Avatar'
 
 // Column layout of the rendered chart, for widgets drawn in step with it
 export interface GanttGeometry {
@@ -136,6 +137,8 @@ export function GanttPanel({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
+  const people = useContext(PeopleContext)
+  const barAvatars = settings.board.avatars.bars
 
   // Always-current refs for callbacks set once at gantt init
   const onDateChangeRef = useRef(onDateChange)
@@ -344,7 +347,16 @@ export function GanttPanel({
       ].filter(Boolean).join(' ')
       // Subtasks (with bars) move along when the parent is dragged
       const dragWith = isParent ? descendants(t.id, tree).map(d => d.id).filter(id => barIds.has(id)) : []
+      // Assignees next to the bar (fork's draw_avatars)
+      const avatars = barAvatars && t.assignees?.length
+        ? t.assignees.map(a => {
+            const known = a.id !== -1 ? people.get(a.id) : undefined
+            const name = known?.username ?? a.username
+            return { name, initials: initials(name), color: known?.color ?? avatarColor(name), url: known?.profilePicture ?? undefined }
+          })
+        : null
       const extra = {
+        ...(avatars ? { _avatars: avatars } : {}),
         ...(classes ? { custom_class: classes } : {}),
         ...(dragWith.length ? { _drag_with: dragWith } : {}),
         ...(look ? { color: look.fill, text_color: look.text } : {}),
@@ -546,7 +558,7 @@ export function GanttPanel({
       applyDecorations()
       emitGeometry()
     }
-  }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount, statusColors]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount, statusColors, barAvatars, people]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Week start / working days changed in Settings: re-render the columns in
   // place (not through update_options, which would reset options such as

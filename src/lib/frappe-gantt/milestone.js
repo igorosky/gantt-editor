@@ -74,6 +74,7 @@ export default class Milestone extends Bar {
         // sliding the label into the diamond.
         label.classList.add('big');
         label.setAttribute('x', this.$bar.getEndX() + 10);
+        this.update_avatars_position();
     }
 
     compute_duration() {

@@ -3765,3 +3765,83 @@
   stroke: var(--critical);
   stroke-dasharray: 5 3;
 }
+
+/* ---------------------------------------------------------------------------
+   Profile pictures: rows, bars, filter, settings
+   --------------------------------------------------------------------------- */
+
+.task-panel {
+  container-type: inline-size;
+  container-name: tasks;
+}
+
+.task-row__people {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* Too narrow for names, dates and faces: the faces go first */
+@container tasks (max-width: 430px) {
+  .task-row__people { display: none; }
+}
+
+.fbar-av-stack .avatar + .avatar {
+  margin-left: -4px;
+  box-shadow: 0 0 0 1.5px #fff;
+}
+
+.fbar-person .avatar {
+  margin-right: 2px;
+}
+
+.avatar__img--round {
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.pf-avatar {
+  overflow: hidden;
+}
+
+.pf-legend__item .avatar__img--round {
+  margin-right: 2px;
+}
+
+.settings__subhead {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-mid);
+}
+
+.settings__checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+}
+
+.gantt .bar-avatar__bg {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.gantt .bar-avatar__text {
+  fill: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.gantt .bar-avatar image {
+  pointer-events: none;
+}
+
+.gantt .bar-avatar__more {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  dominant-baseline: central;
+}

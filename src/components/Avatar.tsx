@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 // A ClickUp workspace member as the board knows them
 export interface Person {
@@ -80,5 +80,28 @@ export function AvatarStack({ people, max = 3, size = 20, pictures = true }: {
         </span>
       )}
     </span>
+  )
+}
+
+// "u:123" (portfolio assignee key) -> 123; other keys have no ClickUp user
+export const personIdOfKey = (key: string): number | null =>
+  key.startsWith('u:') && /^\d+$/.test(key.slice(2)) ? Number(key.slice(2)) : null
+
+// The profile picture of a user id, or `fallback` (no picture, failed load,
+// pictures off), for places with a look of their own
+export function ProfilePicture({ id, size, fallback, enabled = true }: {
+  id: number | null
+  size: number
+  fallback: ReactNode
+  enabled?: boolean
+}) {
+  const people = useContext(PeopleContext)
+  const url = enabled && id !== null ? people.get(id)?.profilePicture ?? undefined : undefined
+  const [broken, setBroken] = useState(false)
+  useEffect(() => setBroken(false), [url])
+  if (!url || broken) return <>{fallback}</>
+  return (
+    <img className="avatar__img avatar__img--round" src={url} width={size} height={size} alt="" draggable={false}
+      onError={() => setBroken(true)} />
   )
 }

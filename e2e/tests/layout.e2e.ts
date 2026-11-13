@@ -69,3 +69,17 @@ test('the divider position persists', async ({ page, seed }) => {
   const after = (await page.locator('.app__panel--left').boundingBox())!.width
   expect(Math.abs(after - width)).toBeLessThan(2)
 })
+
+test('the chart opens at today even when ClickUp data arrives just after load', async ({ page, seed, clickup }) => {
+  clickup.on(async (route, url) => {
+    if (url.pathname !== '/clickup/team') return false
+    await new Promise(r => setTimeout(r, 400))
+    return false // then the default /team answer
+  })
+  await seed({ tasks: [...many.slice(0, 3), { id: 'L', name: 'Later', start: '2026-06-01', end: '2026-06-05' }], linked: true })
+  await page.waitForTimeout(800)
+  const c = (await page.locator('.gantt-container').boundingBox())!
+  const line = (await page.locator('.current-highlight').first().boundingBox())!
+  expect(line.x).toBeGreaterThan(c.x)
+  expect(line.x).toBeLessThan(c.x + 120)
+})

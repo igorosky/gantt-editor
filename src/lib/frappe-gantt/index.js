@@ -1044,10 +1044,14 @@ export default class Gantt {
             (units_since_first_task / this.config.step) *
             this.config.column_width;
 
+        // Local change: the first scroll (to today, at load) jumps instead of
+        // animating. A host refresh during the animation (data arriving just
+        // after load) restored a half-way position and the chart stayed there.
         this.$container.scrollTo({
             left: scroll_pos - this.config.column_width / 6,
-            behavior: 'smooth',
+            behavior: this.scrolled_once ? 'smooth' : 'auto',
         });
+        this.scrolled_once = true;
 
         // Calculate current scroll position's upper text
         if (this.$current) {

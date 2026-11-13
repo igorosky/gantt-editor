@@ -135,3 +135,13 @@ test('hover highlights the row and bar together and shows a tooltip', async ({ p
   await page.mouse.move(x, y + 300)
   await expect(tip).toHaveCount(0)
 })
+
+test('the today line does not swallow clicks on the bars it crosses', async ({ page, seed }) => {
+  await seed({ tasks: TASKS })
+  const line = (await page.locator('.current-highlight').first().boundingBox())!
+  const b = (await page.locator('.bar-wrapper[data-id="D"] .bar').boundingBox())!
+  expect(line.x).toBeGreaterThan(b.x)
+  expect(line.x).toBeLessThan(b.x + b.width)
+  await page.mouse.click(line.x + line.width / 2, b.y + b.height / 2)
+  await expect(bar(page, 'D')).toHaveClass(/is-selected/)
+})

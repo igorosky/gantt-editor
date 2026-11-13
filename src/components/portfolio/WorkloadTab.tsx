@@ -183,7 +183,7 @@ export function WorkloadTab({ projects, today, settings }: Props) {
             {bars.length > 0 && <span>Peak <b>{fmt(bars[peakIdx].total)}</b> <span className="pf-muted">({bars[peakIdx].title})</span></span>}
           </div>
         </div>
-        <Legend series={series} />
+        <Legend series={series} pictures={settings.board.avatars.portfolio} />
         <StackedBarChart
           buckets={bars}
           series={series}

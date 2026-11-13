@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Assignee, Filter, FilterType, GanttTask, Tag } from '../types'
 import { fetchListStatuses } from '../hooks/useListStatuses'
+import { Avatar } from './Avatar'
 
 function readableFg(bg?: string): string | undefined {
   if (!bg) return undefined
@@ -87,10 +88,6 @@ const PRIORITY_META: Record<number, { label: string; color: string }> = {
   4: { label: 'Low',    color: '#94a3b8' },
 }
 
-function avatarInitials(name: string): string {
-  const parts = name.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase()
-}
 
 // ─── useOutsideClose ─────────────────────────────────────────────────────────
 
@@ -249,7 +246,7 @@ function AssigneeValueEditor({ value, onChange, allTasks }: { value: number[]; o
           const m = members.find(x => x.id === key)
           return (
             <span className="fbar-person">
-              <span className="fbar-avatar" title={m?.username}>{m ? avatarInitials(m.username) : '?'}</span>
+              {m ? <Avatar person={m} size={20} /> : <span className="fbar-avatar">?</span>}
               <span>{m?.username}</span>
             </span>
           )
@@ -329,8 +326,7 @@ function ChipSummary({ f, allTasks }: { f: Filter; allTasks: GanttTask[] }) {
         <span className="fbar-av-stack">
           {v.map(id => {
             const m = members.find(x => x.id === id)
-            return m ? <span key={id} className="fbar-avatar fbar-avatar--xs"
-              title={m.username}>{avatarInitials(m.username)}</span> : null
+            return m ? <Avatar key={id} person={m} size={16} /> : null
           })}
         </span>
       )

@@ -12,6 +12,7 @@ import type { ClickMods } from '../lib/selection'
 import { modKey } from '../lib/keys'
 import { DatePicker } from './DatePicker'
 import { TaskWarnings } from './TaskWarnings'
+import { AvatarStack } from './Avatar'
 
 // Horizontal step per hierarchy level, and where the indent starts (row
 // padding + grip), for the drop indicator
@@ -193,6 +194,12 @@ export function TaskRow({
       )}
 
       <TaskWarnings warnings={warnings} />
+
+      {settings.board.avatars.rows && !!task.assignees?.length && (
+        <span className="task-row__people">
+          <AvatarStack people={task.assignees} max={3} size={20} />
+        </span>
+      )}
 
       <div className="task-row__dates">
         {ms ? (

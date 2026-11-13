@@ -165,6 +165,27 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
             The link turns into a dashed red arrow and the task gets a warning; its menu offers
             "Start after predecessors". A milestone may share its day with the tasks around it.
           </div>
+          <div className="settings__subhead">ClickUp profile pictures</div>
+          <div className="settings__checks">
+            {([
+              ['rows', 'In the task list'],
+              ['bars', 'Next to gantt bars'],
+              ['tooltip', 'In the bar tooltip'],
+              ['portfolio', 'In the portfolio (People, Workload)'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="settings__check">
+                <input
+                  type="checkbox"
+                  checked={board.avatars[key]}
+                  onChange={e => setBoard(b => ({ ...b, avatars: { ...b.avatars, [key]: e.target.checked } }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="clickup-modal__hint">
+            Assignee pickers, chips and filters always show pictures; people without one get their initials.
+          </div>
         </section>
 
         <section className="settings__section">
