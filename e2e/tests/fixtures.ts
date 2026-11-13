@@ -176,6 +176,19 @@ export async function settle(page: Page) {
     w.__e2eLast = sig
     return w.__e2eSame >= 3
   }, undefined, { polling: 100 })
+  await barsGrown(page)
+}
+
+// On a new chart svg (page load, back from Portfolio, the chart coming back
+// after an empty board) frappe grows every bar from width 0 by SMIL
+// (`animateSVG`: begin 0.1s, 0.4s long, on the svg's own timeline). A bar box
+// read meanwhile is too narrow, and its centre can land on the 3 px left
+// resize handle: a drag then becomes a left-edge resize.
+export async function barsGrown(page: Page) {
+  await page.waitForFunction(() => {
+    const svg = document.querySelector('svg.gantt') as SVGSVGElement | null
+    return !svg || svg.getCurrentTime() >= 0.55
+  })
 }
 
 // Clicks the middle of a bar (the label sits on top of it)
@@ -215,6 +228,7 @@ export async function dragBy(page: Page, x: number, y: number, dx: number, dy = 
 }
 
 export async function center(page: Page, selector: string) {
+  await barsGrown(page)
   const box = await page.locator(selector).first().boundingBox()
   if (!box) throw new Error(`no box for ${selector}`)
   return { x: box.x + box.width / 2, y: box.y + box.height / 2, box }

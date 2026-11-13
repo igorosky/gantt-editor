@@ -7,20 +7,26 @@ const TASKS: SeedTask[] = [
 ]
 const DAY = 20
 
-test('drags before and after a visit to the portfolio are separate undo steps', async ({ page, seed }) => {
-  await seed({ tasks: TASKS })
-  let c = await center(page, '.bar-wrapper[data-id="A"] .bar')
-  await dragBy(page, c.x, c.y, 2 * DAY)
-  await expect.poll(() => rowDates(page, 'Alpha')).toEqual(['04.03.2026', '08.03.2026'])
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Portfolio' }).click()
-  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Board' }).click()
-  await page.locator('.bar-wrapper[data-id="B"]').waitFor()
-  c = await center(page, '.bar-wrapper[data-id="B"] .bar')
-  await dragBy(page, c.x, c.y, 2 * DAY)
-  await expect.poll(() => rowDates(page, 'Beta')).toEqual(['11.03.2026', '15.03.2026'])
-  await page.keyboard.press('Control+z')
-  await expect.poll(() => rowDates(page, 'Beta')).toEqual(['09.03.2026', '13.03.2026'])
-  expect(await rowDates(page, 'Alpha')).toEqual(['04.03.2026', '08.03.2026'])
+// Known flake (e2e/FLAKES.md): fixed in the helpers (barsGrown), retried once
+// in CI as a safety net. Anonymous describe, so the test title is unchanged.
+test.describe(() => {
+  test.describe.configure({ retries: process.env.CI ? 1 : 0 })
+
+  test('drags before and after a visit to the portfolio are separate undo steps', async ({ page, seed }) => {
+    await seed({ tasks: TASKS })
+    let c = await center(page, '.bar-wrapper[data-id="A"] .bar')
+    await dragBy(page, c.x, c.y, 2 * DAY)
+    await expect.poll(() => rowDates(page, 'Alpha')).toEqual(['04.03.2026', '08.03.2026'])
+    await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Portfolio' }).click()
+    await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Board' }).click()
+    await page.locator('.bar-wrapper[data-id="B"]').waitFor()
+    c = await center(page, '.bar-wrapper[data-id="B"] .bar')
+    await dragBy(page, c.x, c.y, 2 * DAY)
+    await expect.poll(() => rowDates(page, 'Beta')).toEqual(['11.03.2026', '15.03.2026'])
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => rowDates(page, 'Beta')).toEqual(['09.03.2026', '13.03.2026'])
+    expect(await rowDates(page, 'Alpha')).toEqual(['04.03.2026', '08.03.2026'])
+  })
 })
 
 test('a details popup opened by F2 with the list hidden does not reopen an old picker', async ({ page, seed }) => {
