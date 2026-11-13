@@ -326,8 +326,12 @@ export default class Bar {
                 .classList.add('hide');
         });
 
-        $.on(this.group, 'click', () => {
-            this.gantt.trigger_event('click', [this.task]);
+        // Local changes: a drop is not a click (action_completed is set by
+        // the drag end for a bar that moved), and the event goes along so
+        // the host can read the modifier keys
+        $.on(this.group, 'click', (e) => {
+            if (this.action_completed) return;
+            this.gantt.trigger_event('click', [this.task, e]);
         });
 
         $.on(this.group, 'dblclick', (e) => {
@@ -339,7 +343,7 @@ export default class Bar {
             if (this.gantt.popup)
                 this.gantt.popup.parent.classList.remove('hide');
 
-            this.gantt.trigger_event('double_click', [this.task]);
+            this.gantt.trigger_event('double_click', [this.task, e]);
         });
         let tapedTwice = false;
         $.on(this.group, 'touchstart', (e) => {
@@ -455,21 +459,35 @@ export default class Bar {
 
     compute_start_end_date() {
         const bar = this.$bar;
+        const { column_width, step, unit } = this.gantt.config;
         // Local fix: x and width are snapped to whole units, but the float
         // math can give 60.99999 for 61 and date_utils.add parseInt's it,
-        // landing a day early. Round first.
-        const x_in_units = bar.getX() / this.gantt.config.column_width;
-        let new_start_date = date_utils.add(
-            this.gantt.gantt_start,
-            Math.round(x_in_units * this.gantt.config.step),
-            this.gantt.config.unit,
-        );
+        // landing a day early. Round first (x_to_date does).
+        const new_start_date = this.gantt.x_to_date(bar.getX());
+        if (unit === 'month') {
+            // Local fix: Month view rounded a drop to whole months. A drag
+            // (width unchanged since mousedown) keeps the length in days, a
+            // resize reads the day under the new end.
+            const dragged =
+                bar.owidth !== undefined &&
+                Math.abs(bar.getWidth() - bar.owidth) < 0.5;
+            const new_end_date = dragged
+                ? date_utils.add(
+                      new_start_date,
+                      Math.round(
+                          date_utils.diff(this.task._end, this.task._start, 'day'),
+                      ),
+                      'day',
+                  )
+                : this.gantt.x_to_date(bar.getX() + bar.getWidth());
+            return { new_start_date, new_end_date };
+        }
 
-        const width_in_units = bar.getWidth() / this.gantt.config.column_width;
+        const width_in_units = bar.getWidth() / column_width;
         const new_end_date = date_utils.add(
             new_start_date,
-            Math.round(width_in_units * this.gantt.config.step),
-            this.gantt.config.unit,
+            Math.round(width_in_units * step),
+            unit,
         );
 
         return { new_start_date, new_end_date };

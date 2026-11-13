@@ -26,6 +26,32 @@ function calendarOptions(c: Calendar) {
 
 const calendarKey = (c: Calendar) => `${c.weekStart}:${c.workdays.join(',')}`
 
+export type ViewMode = 'Day' | 'Week' | 'Month'
+const VIEW_MODES: ViewMode[] = ['Day', 'Week', 'Month']
+const VIEW_KEY = 'gantt-view'
+
+function loadViewMode(): ViewMode {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY)
+    const mode = raw ? (JSON.parse(raw) as { mode?: unknown }).mode : undefined
+    if (VIEW_MODES.includes(mode as ViewMode)) return mode as ViewMode
+  } catch { /* malformed entry */ }
+  return 'Week'
+}
+
+export interface HistoryControls {
+  undoLabel?: string // set = something to undo
+  redoLabel?: string
+  onUndo: () => void
+  onRedo: () => void
+}
+
+export interface FilterInfo {
+  shown: number
+  total: number
+  onClear: () => void
+}
+
 // Whether the task gets a bar (a dateless one is a hidden placeholder row)
 const hasBar = (t: GanttTask): boolean => (isMilestone(t) ? !!(t.end ?? t.start) : !!(t.start && t.end))
 
@@ -33,7 +59,8 @@ interface Props {
   tasks: GanttTask[] // the visible rows, in display order
   allTasks: GanttTask[] // every task: subtask spans and date propagation reach hidden rows too
   rows: TreeRow[] // display metadata for `tasks`
-  onDateChange: (id: string, start: Date, end: Date) => void
+  // `key` is the same for every change of one drag gesture (one undo step)
+  onDateChange: (id: string, start: Date, end: Date, key?: string) => void
   onContainerReady: (el: HTMLElement) => void
   onToggleDependency: (sourceId: string, targetId: string) => void
   focusIdRef?: React.MutableRefObject<string | null>
@@ -48,6 +75,11 @@ interface Props {
   onToggleLoadStrip: () => void
   calendar: Calendar
   statusColors: boolean // fill bars with the task's status color
+  history: HistoryControls
+  leftHidden: boolean // the task list is hidden: its key actions move here
+  onShowLeft: () => void
+  onAddTask: () => void
+  filterInfo?: FilterInfo // filters active
 }
 
 export function GanttPanel({
@@ -69,6 +101,11 @@ export function GanttPanel({
   onToggleLoadStrip,
   calendar,
   statusColors,
+  history,
+  leftHidden,
+  onShowLeft,
+  onAddTask,
+  filterInfo,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -90,6 +127,10 @@ export function GanttPanel({
   })
   // Calendar the live chart was built or last re-rendered with
   const appliedCalendarRef = useRef('')
+  const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
+  // Bumped on every mousedown on a bar: the date changes of one gesture share
+  // an undo step
+  const gestureRef = useRef(0)
   // A refresh skipped during a drag; the drop re-runs the effect through dropCount
   const refreshPendingRef = useRef(false)
   const [dropCount, bumpDropCount] = useReducer((n: number) => n + 1, 0)
@@ -164,10 +205,12 @@ export function GanttPanel({
     }
   }
 
-  // Arrows carry no class of their own — frappe-gantt draws them as bare paths
-  // tagged with data-from / data-to — and they are rebuilt on every refresh, so
-  // the critical ones are re-marked after each render.
-  function applyCriticalArrows() {
+  // Classes the host puts on frappe's DOM: arrows carry no class of their own
+  // (bare paths tagged with data-from / data-to) and bars and arrows are
+  // rebuilt on every render, also renders frappe starts itself (the infinite
+  // padding on scroll), so everything is re-marked after each one. Never
+  // through refresh: these change without the tasks changing.
+  function applyDecorations() {
     containerRef.current
       ?.querySelectorAll<SVGPathElement>('path[data-from][data-to]')
       .forEach(p => {
@@ -175,6 +218,8 @@ export function GanttPanel({
         p.classList.toggle('arrow--critical', criticalEdges.has(key))
       })
   }
+  const decorateRef = useRef(applyDecorations)
+  decorateRef.current = applyDecorations
 
   function highlightBar(taskId: string, on: boolean) {
     containerRef.current
@@ -315,7 +360,7 @@ export function GanttPanel({
         gc.scrollTop = st
       }
 
-      applyCriticalArrows()
+      applyDecorations()
       emitGeometry()
     } else {
       const panelHeight = containerRef.current.clientHeight
@@ -323,16 +368,19 @@ export function GanttPanel({
       appliedCalendarRef.current = calendarKey(calendarRef.current)
       ganttRef.current = new FrappeGantt(containerRef.current, frappeTasks, {
         ...calendarOptions(calendarRef.current),
-        view_mode: 'Week',
+        view_mode: viewMode,
         container_height: panelHeight,
         popup: false,
+        // The toolbar has its own Today button
+        today_button: false,
         on_date_change: (task, start, end) => {
           if (!task.id) return
           const allTasks = allTasksRef.current
           const prev = allTasks.find(t => t.id === task.id)
           // A milestone keeps a single date on both fields
           const newEnd = prev && isMilestone(prev) ? start : end
-          onDateChangeRef.current(task.id, start, newEnd)
+          const key = `drag:${gestureRef.current}`
+          onDateChangeRef.current(task.id, start, newEnd, key)
           if (prev && prev.start && prev.end) {
             // Whole calendar days, so stored times of day (frappe's 23:59:59
             // ends, ClickUp's 4 am) and DST changes never skew the comparison
@@ -349,25 +397,32 @@ export function GanttPanel({
               for (const sid of moved) {
                 const s = allTasks.find(t => t.id === sid)
                 if (s && s.start && s.end) {
-                  onDateChangeRef.current(sid, shiftDays(s.start, days), shiftDays(s.end, days))
+                  onDateChangeRef.current(sid, shiftDays(s.start, days), shiftDays(s.end, days), key)
                 }
               }
             }
           }
         },
         on_click: (task) => ganttClickRef.current(task),
-        // Fork event (not in @types/frappe-gantt): pointer released after a drag
-        ...{ on_drag_end: () => { if (refreshPendingRef.current) bumpDropCount() } },
+        // Fork events (not in @types/frappe-gantt): pointer released after a
+        // drag; any render, including ones frappe starts on its own
+        ...{
+          on_drag_end: () => { if (refreshPendingRef.current) bumpDropCount() },
+          on_render: () => decorateRef.current(),
+        },
       })
 
       const ganttContainer = (ganttRef.current as any)?.$container as HTMLElement | null
       if (ganttContainer) {
         ganttContainer.style.height = `${panelHeight}px`
         ganttContainer.addEventListener('scroll', emitGeometry, { passive: true })
+        ganttContainer.addEventListener('mousedown', e => {
+          if ((e.target as Element).closest?.('.bar-wrapper')) gestureRef.current++
+        }, true)
         onContainerReadyRef.current(ganttContainer)
       }
 
-      applyCriticalArrows()
+      applyDecorations()
       emitGeometry()
     }
   }, [tasks, allTasks, rows, criticalIds, criticalEdges, dropCount, statusColors]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -385,9 +440,38 @@ export function GanttPanel({
     const st = gc?.scrollTop ?? 0
     gantt.change_view_mode(undefined, true)
     if (gc) gc.scrollTop = st
-    applyCriticalArrows()
+    applyDecorations()
     emitGeometry()
   }, [calendar]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Day / Week / Month: dates computed fresh for the new unit (a refresh
+  // would keep the old view's first date, e.g. mid-month in Month view),
+  // keeping the date in the middle of the view in the middle
+  const appliedViewRef = useRef(viewMode)
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ mode: viewMode }))
+    } catch { /* quota */ }
+    const gantt = ganttRef.current as any
+    if (!gantt || appliedViewRef.current === viewMode) return
+    appliedViewRef.current = viewMode
+    const gc = gantt.$container as HTMLElement
+    const centre = gantt.x_to_date(gc.scrollLeft + gc.clientWidth / 2) as Date
+    const st = gc.scrollTop
+    const scrollTo = gantt.options.scroll_to
+    gantt.options.scroll_to = null
+    gantt.change_view_mode(viewMode)
+    gantt.options.scroll_to = scrollTo
+    gc.scrollLeft = Math.max(0, gantt.date_to_x(centre) - gc.clientWidth / 2)
+    gc.scrollTop = st
+    applyDecorations()
+    emitGeometry()
+  }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function scrollToToday() {
+    const gantt = ganttRef.current as any
+    gantt?.scroll_current?.()
+  }
 
   const connectLabel = connectSource
     ? `Click the successor task  (Esc to cancel)`
@@ -396,6 +480,50 @@ export function GanttPanel({
   return (
     <div className={`gantt-panel${connectMode ? ' gantt-panel--connecting' : ''}`}>
       <div className="gantt-panel__topbar">
+        {leftHidden && (
+          <>
+            <button
+              type="button"
+              className="gantt-panel__tool-btn"
+              onClick={onShowLeft}
+              title="Show the task list (\)"
+            >
+              ☰ Tasks
+            </button>
+            <button type="button" className="gantt-panel__tool-btn gantt-panel__tool-btn--accent" onClick={onAddTask}>
+              + Add task
+            </button>
+            {filterInfo && (
+              <span className="gantt-panel__filter-chip" title="Filters are active in the task list">
+                Filtered: {filterInfo.shown} of {filterInfo.total}
+                <button type="button" aria-label="Clear filters" title="Clear filters" onClick={filterInfo.onClear}>×</button>
+              </span>
+            )}
+            <span className="gantt-panel__sep" aria-hidden="true" />
+          </>
+        )}
+        <div className="gantt-panel__history" role="group" aria-label="Undo and redo">
+          <button
+            type="button"
+            className="gantt-panel__icon-btn"
+            onClick={history.onUndo}
+            disabled={!history.undoLabel}
+            aria-label="Undo"
+            title={history.undoLabel ? `Undo: ${history.undoLabel} (Ctrl+Z)` : 'Nothing to undo'}
+          >
+            ↶
+          </button>
+          <button
+            type="button"
+            className="gantt-panel__icon-btn"
+            onClick={history.onRedo}
+            disabled={!history.redoLabel}
+            aria-label="Redo"
+            title={history.redoLabel ? `Redo: ${history.redoLabel} (Ctrl+Y)` : 'Nothing to redo'}
+          >
+            ↷
+          </button>
+        </div>
         <button
           className={`gantt-panel__connect-btn${connectMode ? ' gantt-panel__connect-btn--active' : ''}`}
           onClick={toggleConnectMode}
@@ -407,6 +535,22 @@ export function GanttPanel({
           <span className="gantt-panel__connect-hint">{connectLabel}</span>
         )}
         <div className="gantt-panel__topbar-spacer" />
+        <button type="button" className="gantt-panel__tool-btn" onClick={scrollToToday} title="Scroll to today">
+          Today
+        </button>
+        <div className="gantt-panel__zoom" role="group" aria-label="Zoom">
+          {VIEW_MODES.map(m => (
+            <button
+              key={m}
+              type="button"
+              className={`gantt-panel__zoom-btn${viewMode === m ? ' gantt-panel__zoom-btn--active' : ''}`}
+              aria-pressed={viewMode === m}
+              onClick={() => setViewMode(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
         {criticalOn && (
           <div className="gantt-panel__crit-scope" role="group" aria-label="Critical path scope">
             <button

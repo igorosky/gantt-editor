@@ -16,6 +16,7 @@ import { SyncConflictDialog } from './components/SyncConflictDialog'
 import { SyncDeleteDialog } from './components/SyncDeleteDialog'
 import { PendingDeletionsDialog } from './components/PendingDeletionsDialog'
 import { WorkloadStrip } from './components/WorkloadStrip'
+import { Toasts, useToasts } from './components/Toasts'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
 import { useHashRoute } from './hooks/useHashRoute'
@@ -37,6 +38,7 @@ import type { ProjectRef } from './lib/portfolioData'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
 import { buildTree, descendants, flattenTree } from './lib/tree'
 import { daysBetween, shiftDays } from './lib/dates'
+import { isActivationTarget, isTypingTarget, modKey } from './lib/keys'
 import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
 
@@ -70,6 +72,23 @@ function loadStripPrefs(): { on: boolean; metric: WorkloadMetric } {
   return { on: false, metric: 'count' }
 }
 
+const LAYOUT_KEY = 'gantt-layout'
+
+// Width of the task list (percent) and whether it is hidden
+function loadLayout(): { leftPct: number; leftHidden: boolean } {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as { leftPct?: unknown; leftHidden?: unknown }
+      const pct = typeof p.leftPct === 'number' && Number.isFinite(p.leftPct)
+        ? Math.min(MAX_PCT, Math.max(MIN_PCT, p.leftPct))
+        : DEFAULT_PCT
+      return { leftPct: pct, leftHidden: p.leftHidden === true }
+    }
+  } catch { /* malformed entry */ }
+  return { leftPct: DEFAULT_PCT, leftHidden: false }
+}
+
 const COLLAPSED_KEY = 'gantt-collapsed'
 
 function loadCollapsed(): Set<string> {
@@ -89,13 +108,17 @@ export default function App() {
   const {
     tasks, setTasks, commitTask, removeTask, updateTask, moveTask, sortTasks, setTaskParent,
     indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor, storageFull,
+    undo, redo, undoLabel, redoLabel,
   } = useTasks(board.id)
+  const toast = useToasts()
   const { config, setConfig, clearConfig } = useClickUpConfig()
   const workspace = useWorkspaceTree(config?.token, config?.teamId)
   const [linkOpen, setLinkOpen] = useState(false)
   const { settings, setSettings } = useSettings()
   const [appSettingsOpen, setAppSettingsOpen] = useState(false)
-  const [leftPct, setLeftPct] = useState(DEFAULT_PCT)
+  const [layout, setLayout] = useState(loadLayout)
+  const leftPct = layout.leftPct
+  const leftHidden = layout.leftHidden
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
@@ -190,6 +213,16 @@ export default function App() {
       localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]))
     } catch { /* quota */ }
   }, [collapsed])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout))
+    } catch { /* quota */ }
+  }, [layout])
+
+  const setLeftHidden = useCallback((hidden: boolean) => {
+    setLayout(l => (l.leftHidden === hidden ? l : { ...l, leftHidden: hidden }))
+  }, [])
 
   const toggleCollapsed = useCallback((id: string) => {
     setCollapsed(prev => {
@@ -379,9 +412,9 @@ export default function App() {
 
   const handleResize = useCallback((deltaX: number) => {
     const containerWidth = containerRef.current?.offsetWidth ?? window.innerWidth
-    setLeftPct(prev => {
-      const newPct = prev + (deltaX / containerWidth) * 100
-      return Math.min(MAX_PCT, Math.max(MIN_PCT, newPct))
+    setLayout(prev => {
+      const newPct = prev.leftPct + (deltaX / containerWidth) * 100
+      return { ...prev, leftPct: Math.min(MAX_PCT, Math.max(MIN_PCT, newPct)) }
     })
   }, [])
 
@@ -498,6 +531,54 @@ export default function App() {
       ganttContainer.removeEventListener('scroll', syncGanttToList)
       listEl.removeEventListener('scroll', syncListToGantt)
     }
+  }, [])
+
+  // The hidden task list stays mounted (scroll sync is wired to it); shown
+  // again it takes the gantt's scroll position
+  useEffect(() => {
+    if (leftHidden) return
+    const list = taskListRef.current
+    if (list && ganttContainer) list.scrollTop = ganttContainer.scrollTop
+  }, [leftHidden, ganttContainer])
+
+  // Undo / redo are off while a pull / push runs or waits for a dialog: its
+  // results are about to be applied to the board as it is
+  const historyBlocked = !!syncBusy || !!pendingSync
+  const doUndo = useCallback(() => {
+    if (historyBlocked) return
+    const label = undo()
+    if (label) toast.push(`Undone: ${label}`)
+  }, [historyBlocked, undo, toast.push])
+  const doRedo = useCallback(() => {
+    if (historyBlocked) return
+    const label = redo()
+    if (label) toast.push(`Redone: ${label}`)
+  }, [historyBlocked, redo, toast.push])
+
+  // Shortcuts on the board, unless a dialog is open or a field has focus
+  const dialogOpen = settingsOpen || appSettingsOpen || exportOpen || !!detailTaskId || !!newTaskDraft
+    || !!pendingSync || syncLogOpen || pendingOpen || linkOpen
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
+  keyRef.current = (e: KeyboardEvent) => {
+    if (route.view !== 'board' || dialogOpen || e.defaultPrevented) return
+    const el = document.activeElement
+    if (isTypingTarget(el)) return
+    const key = e.key.toLowerCase()
+    if (modKey(e) && !e.altKey && key === 'z' && !e.shiftKey) {
+      e.preventDefault()
+      doUndo()
+    } else if (modKey(e) && !e.altKey && key === 'y') {
+      e.preventDefault()
+      doRedo()
+    } else if (!modKey(e) && !e.altKey && e.key === '\\' && !isActivationTarget(el)) {
+      e.preventDefault()
+      setLeftHidden(!leftHidden)
+    }
+  }
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => keyRef.current(e)
+    window.addEventListener('keydown', fn)
+    return () => window.removeEventListener('keydown', fn)
   }, [])
 
   const lastRun = syncLog.runs[0]
@@ -636,7 +717,11 @@ export default function App() {
         </div>
       )}
       <div className="app__body" ref={containerRef}>
-        <div className="app__panel app__panel--left" style={{ width: `${leftPct}%` }}>
+        <div
+          className={`app__panel app__panel--left${leftHidden ? ' app__panel--hidden' : ''}`}
+          style={{ width: leftHidden ? 0 : `${leftPct}%` }}
+          aria-hidden={leftHidden || undefined}
+        >
           <TaskPanel
             rows={rows}
             tree={tree}
@@ -663,15 +748,16 @@ export default function App() {
             criticalIds={critical.taskIds}
             settings={settings}
             statusSource={statusSource}
+            onHide={() => setLeftHidden(true)}
           />
         </div>
-        <Divider onResize={handleResize} />
-        <div className="app__panel app__panel--right" style={{ width: `${100 - leftPct}%` }}>
+        {!leftHidden && <Divider onResize={handleResize} />}
+        <div className="app__panel app__panel--right" style={{ width: leftHidden ? '100%' : `${100 - leftPct}%` }}>
           <GanttPanel
             tasks={visibleTasks}
             allTasks={tasks}
             rows={rows}
-            onDateChange={(id, start, end) => updateTask(id, { start, end })}
+            onDateChange={(id, start, end, key) => updateTask(id, { start, end }, { key })}
             onContainerReady={handleContainerReady}
             onToggleDependency={handleToggleDependency}
             focusIdRef={lhsFocusIdRef}
@@ -686,6 +772,20 @@ export default function App() {
             onToggleLoadStrip={() => setLoadStripOn(v => !v)}
             calendar={settings.calendar}
             statusColors={settings.board.statusColors}
+            history={{
+              undoLabel: historyBlocked ? undefined : undoLabel,
+              redoLabel: historyBlocked ? undefined : redoLabel,
+              onUndo: doUndo,
+              onRedo: doRedo,
+            }}
+            leftHidden={leftHidden}
+            onShowLeft={() => setLeftHidden(false)}
+            onAddTask={handleAddTask}
+            filterInfo={filters.length ? {
+              shown: filteredTasks.length,
+              total: boardTasks.length,
+              onClear: () => setFilters([]),
+            } : undefined}
           />
         </div>
       </div>
@@ -701,6 +801,7 @@ export default function App() {
         />
       )}
       </>)}
+      <Toasts toasts={toast.toasts} onDismiss={toast.dismiss} />
       <ClickUpSettings
         open={settingsOpen}
         config={config}

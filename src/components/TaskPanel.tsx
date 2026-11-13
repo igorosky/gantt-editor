@@ -36,13 +36,14 @@ interface Props {
   criticalIds: Set<string>
   settings: Settings
   statusSource?: StatusSource
+  onHide: () => void
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
   onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
   onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
-  statusSource,
+  statusSource, onHide,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -87,6 +88,15 @@ export function TaskPanel({
   return (
     <div className="task-panel">
       <div className="task-panel__header" style={{ height: GANTT_HEADER_HEIGHT }}>
+        <button
+          type="button"
+          className="task-panel__hide-btn"
+          onClick={onHide}
+          aria-label="Hide the task list"
+          title="Hide the task list (\)"
+        >
+          ‹
+        </button>
         <h2 className="task-panel__title">Tasks</h2>
         <div className="task-panel__header-actions">
           {hasParents && (

@@ -428,6 +428,40 @@ export default class Gantt {
         this.map_arrows_on_bars();
         this.set_dimensions();
         this.set_scroll_position(this.options.scroll_to);
+        // Local addition: the host re-applies its DOM decorations (classes on
+        // bars and arrows), also after renders it did not ask for, such as
+        // the infinite-padding extension on scroll
+        this.trigger_event('render', []);
+    }
+
+    // Local addition: the date at x. Day-based units are exact; months
+    // invert date_utils.diff's month model (whole months + day / 31), so a
+    // drop in Month view lands on the day the bar shows instead of a whole
+    // month.
+    x_to_date(x) {
+        const { column_width, step, unit } = this.config;
+        const units = (x / column_width) * step;
+        if (unit !== 'month') {
+            return date_utils.add(this.gantt_start, Math.round(units), unit);
+        }
+        let whole = Math.ceil(units) - 1;
+        let day = Math.round((units - whole) * 31);
+        if (day < 1) {
+            whole -= 1;
+            day = 31;
+        }
+        const first = date_utils.add(this.gantt_start, whole, 'month');
+        const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+        return new Date(first.getFullYear(), first.getMonth(), Math.min(day, last));
+    }
+
+    // Local addition: x of a date (the inverse of x_to_date)
+    date_to_x(date) {
+        return (
+            (date_utils.diff(date, this.gantt_start, this.config.unit) /
+                this.config.step) *
+            this.config.column_width
+        );
     }
 
     setup_layers() {
@@ -1236,6 +1270,10 @@ export default class Gantt {
         });
 
         $.on(this.$svg, 'mousedown', '.bar-wrapper, .handle', (e, element) => {
+            // Local fix: only the main button drags. A right press armed the
+            // drag too, so moving the pointer with a context menu open
+            // dragged the bar.
+            if (e.button !== 0) return;
             const bar_wrapper = $.closest('.bar-wrapper', element);
             if (element.classList.contains('left')) {
                 is_resizing_left = true;

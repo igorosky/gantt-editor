@@ -33,15 +33,16 @@ export interface Seed {
   storage?: Record<string, unknown> // extra localStorage entries (JSON-encoded)
 }
 
+// Dates as strings without a zone: the app's `new Date()` reads them as
+// local midnight in the browser (Europe/Warsaw), as its date pickers store them
 const local = (d: string) => `${d}T00:00:00`
 
-// Serialized like useTasks does: dates as strings new Date() parses as local
 function serialize(tasks: SeedTask[]) {
   return tasks.map(t => ({
     progress: 0,
     ...t,
-    ...(t.start ? { start: new Date(local(t.start)).toISOString() } : {}),
-    ...(t.end ? { end: new Date(local(t.end)).toISOString() } : {}),
+    ...(t.start ? { start: local(t.start) } : {}),
+    ...(t.end ? { end: local(t.end) } : {}),
   }))
 }
 

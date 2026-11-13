@@ -92,7 +92,8 @@ const DEFAULT_VIEW_MODES = [
                 ? date_utils.format(d, 'YYYY', lang)
                 : '',
         thick_line: (d) => d.getMonth() % 3 === 0,
-        snap_at: '7d',
+        // Local change: day steps (was 7d), so Month view drops land on days
+        snap_at: '1d',
     },
     {
         name: 'Year',
