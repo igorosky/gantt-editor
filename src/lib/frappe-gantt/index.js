@@ -428,6 +428,104 @@ export default class Gantt {
         this.map_arrows_on_bars();
         this.set_dimensions();
         this.set_scroll_position(this.options.scroll_to);
+        // Local addition: the host re-applies its DOM decorations (classes on
+        // bars and arrows), also after renders it did not ask for, such as
+        // the infinite-padding extension on scroll
+        this.trigger_event('render', []);
+    }
+
+    // Local addition: drag from a bar's connector dot onto another bar. A
+    // dashed line follows the pointer, the bar under it is marked; the drop
+    // fires connect(from, to), Escape or a drop elsewhere connect(from, null).
+    // bar_being_dragged is set meanwhile, so the host holds its refreshes.
+    start_connect(e, element) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = element.closest('.bar-wrapper');
+        const from = wrapper && wrapper.getAttribute('data-id');
+        const from_bar = from && this.get_bar(from);
+        if (!from_bar) return;
+        this.bar_being_dragged = false;
+        this.$svg.classList.add('connecting');
+        const line = createSVG('path', {
+            class: 'connect-line',
+            append_to: this.layers.arrow,
+        });
+        const sx = from_bar.$bar.getEndX();
+        const sy = from_bar.$bar.getY() + from_bar.$bar.getHeight() / 2;
+        const to_svg = (cx, cy) => {
+            const pt = this.$svg.createSVGPoint();
+            pt.x = cx;
+            pt.y = cy;
+            return pt.matrixTransform(this.$svg.getScreenCTM().inverse());
+        };
+        let target = null;
+        const move = (ev) => {
+            const p = to_svg(ev.clientX, ev.clientY);
+            line.setAttribute('d', `M ${sx} ${sy} L ${p.x} ${p.y}`);
+            const hit = document
+                .elementFromPoint(ev.clientX, ev.clientY)
+                ?.closest?.('.bar-wrapper');
+            const id = hit && hit.getAttribute('data-id');
+            const next = id && id !== from ? hit : null;
+            if (next !== target) {
+                if (target) target.classList.remove('connect-target');
+                target = next;
+                if (target) target.classList.add('connect-target');
+            }
+        };
+        const finish = (ok) => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+            document.removeEventListener('keydown', key, true);
+            line.remove();
+            if (target) target.classList.remove('connect-target');
+            this.$svg.classList.remove('connecting');
+            this.bar_being_dragged = null;
+            const to = ok && target ? target.getAttribute('data-id') : null;
+            this.trigger_event('connect', [from, to]);
+        };
+        const up = () => finish(true);
+        const key = (ev) => {
+            if (ev.key !== 'Escape') return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            finish(false);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+        document.addEventListener('keydown', key, true);
+        move(e);
+    }
+
+    // Local addition: the date at x. Day-based units are exact; months
+    // invert date_utils.diff's month model (whole months + day / 31), so a
+    // drop in Month view lands on the day the bar shows instead of a whole
+    // month.
+    x_to_date(x) {
+        const { column_width, step, unit } = this.config;
+        const units = (x / column_width) * step;
+        if (unit !== 'month') {
+            return date_utils.add(this.gantt_start, Math.round(units), unit);
+        }
+        let whole = Math.ceil(units) - 1;
+        let day = Math.round((units - whole) * 31);
+        if (day < 1) {
+            whole -= 1;
+            day = 31;
+        }
+        const first = date_utils.add(this.gantt_start, whole, 'month');
+        const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+        return new Date(first.getFullYear(), first.getMonth(), Math.min(day, last));
+    }
+
+    // Local addition: x of a date (the inverse of x_to_date)
+    date_to_x(date) {
+        return (
+            (date_utils.diff(date, this.gantt_start, this.config.unit) /
+                this.config.step) *
+            this.config.column_width
+        );
     }
 
     setup_layers() {
@@ -1010,10 +1108,14 @@ export default class Gantt {
             (units_since_first_task / this.config.step) *
             this.config.column_width;
 
+        // Local change: the first scroll (to today, at load) jumps instead of
+        // animating. A host refresh during the animation (data arriving just
+        // after load) restored a half-way position and the chart stayed there.
         this.$container.scrollTo({
             left: scroll_pos - this.config.column_width / 6,
-            behavior: 'smooth',
+            behavior: this.scrolled_once ? 'smooth' : 'auto',
         });
+        this.scrolled_once = true;
 
         // Calculate current scroll position's upper text
         if (this.$current) {
@@ -1231,11 +1333,22 @@ export default class Gantt {
                 this.bar_being_dragged = true;
         });
 
+        $.on(this.$svg, 'mousedown', '.connect-handle', (e, element) => {
+            if (e.button !== 0) return;
+            this.start_connect(e, element);
+        });
+
         $.on(this.$svg, 'mousedown', '.grid-column', (e) => {
             this.trigger_event('date_click', [this.getDateFromClick(e)]);
         });
 
         $.on(this.$svg, 'mousedown', '.bar-wrapper, .handle', (e, element) => {
+            // Local fix: only the main button drags. A right press armed the
+            // drag too, so moving the pointer with a context menu open
+            // dragged the bar.
+            if (e.button !== 0) return;
+            // The connector dot starts a link, not a drag (start_connect)
+            if (e.target.closest && e.target.closest('.connect-handle')) return;
             const bar_wrapper = $.closest('.bar-wrapper', element);
             if (element.classList.contains('left')) {
                 is_resizing_left = true;
@@ -1259,6 +1372,15 @@ export default class Gantt {
                     parent_bar_id,
                     ...this.get_all_dependent_tasks(parent_bar_id),
                 ];
+                // Local addition: the host may drag more bars along (the rest
+                // of a multi-selection), each with its own dependents
+                const extra = this.options.get_drag_group
+                    ? this.options.get_drag_group(parent_bar_id) || []
+                    : [];
+                for (const id of extra) {
+                    ids.push(id, ...this.get_all_dependent_tasks(id));
+                }
+                ids = [...new Set(ids)];
             } else {
                 ids = [parent_bar_id];
             }
@@ -1436,7 +1558,8 @@ export default class Gantt {
         // stayed set, and the host skipped its refreshes until the next
         // mouseup inside). drag_end tells the host the drag is over: the
         // dates went out frame by frame, so the drop itself changes nothing.
-        document.addEventListener('mouseup', () => {
+        // Kept so destroy() can remove it
+        this._on_document_mouseup = () => {
             const was_active = action_in_progress();
             is_dragging = false;
             is_resizing_left = false;
@@ -1448,14 +1571,18 @@ export default class Gantt {
             if (!was_active) return;
 
             this.bar_being_dragged = null;
+            // Local addition: whether any bar moved (a press without a move
+            // also ends here)
+            const moved = bars.some((bar) => !!bar.$bar.finaldx);
             bars.forEach((bar) => {
                 const $bar = bar.$bar;
                 if (!$bar.finaldx) return;
                 bar.date_changed();
                 bar.set_action_completed();
             });
-            this.trigger_event('drag_end', []);
-        });
+            this.trigger_event('drag_end', [moved]);
+        };
+        document.addEventListener('mouseup', this._on_document_mouseup);
     }
 
     // Fixed BFS: adds successors to 'out' only after computing next 'to_process',
@@ -1602,6 +1729,14 @@ export default class Gantt {
             .reduce((prev_date, cur_date) =>
                 cur_date <= prev_date ? cur_date : prev_date,
             );
+    }
+
+    // Local addition: clear() plus the document listener a host would leak
+    // when it drops this instance (render() calls clear(), so clear() itself
+    // keeps it)
+    destroy() {
+        document.removeEventListener('mouseup', this._on_document_mouseup);
+        this.clear();
     }
 
     clear() {

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { GanttTask } from '../types'
 import type { GanttGeometry } from './GanttPanel'
-import { DAY_MS, addDays, fmtShort } from '../lib/dates'
+import { DAY_MS, MONTHS, addDays, fmtShort } from '../lib/dates'
 import { computeWorkload, type WorkloadMetric } from '../lib/workload'
 import { withoutBacklog, type Settings } from '../lib/settings'
 import {
@@ -62,15 +62,22 @@ export function WorkloadStrip({ tasks: allTasks, geometry, container, metric, on
     return () => container.removeEventListener('scroll', sync)
   }, [container, geometry])
 
+  // The gantt's zoom decides the buckets: one per column (day, week, month)
+  const stepDays = geometry && geometry.dates.length >= 2
+    ? Math.round((geometry.dates[1].getTime() - geometry.dates[0].getTime()) / DAY_MS)
+    : 7
+  const unit: 'day' | 'week' | 'month' = stepDays <= 1 ? 'day' : stepDays <= 7 ? 'week' : 'month'
+
   const result = useMemo(() => {
     if (!geometry || geometry.dates.length < 2) return null
     const { dates } = geometry
-    const stepDays = Math.round((dates[1].getTime() - dates[0].getTime()) / DAY_MS)
-    const bounds = [...dates, addDays(dates[dates.length - 1], stepDays)]
+    const last = dates[dates.length - 1]
+    const end = unit === 'month' ? new Date(last.getFullYear(), last.getMonth() + 1, 1) : addDays(last, stepDays)
+    const bounds = [...dates, end]
     return computeWorkload(tasks, bounds, {
       metric, keysOf: assigneeKeys, workdays: settings.calendar.workdays,
     })
-  }, [tasks, geometry, metric, settings.calendar.workdays])
+  }, [tasks, geometry, metric, settings.calendar.workdays, unit, stepDays])
 
   const names = useMemo(() => {
     const m = new Map<string, string>([[UNASSIGNED_KEY, 'Unassigned']])
@@ -90,7 +97,11 @@ export function WorkloadStrip({ tasks: allTasks, geometry, container, metric, on
     const people = Object.entries(b.byKey).sort((a, z) => z[1] - a[1])
     return (
       <>
-        <div className="pf-tip__title">Week of {fmtShort(b.start)}</div>
+        <div className="pf-tip__title">
+          {unit === 'day' ? fmtShort(b.start)
+            : unit === 'week' ? `Week of ${fmtShort(b.start)}`
+            : `${MONTHS[b.start.getMonth()]} ${b.start.getFullYear()}`}
+        </div>
         {people.map(([k, v]) => (
           <div key={k} className="pf-tip__row">
             <span className="pf-avatar pf-avatar--xs" aria-hidden="true">{k === UNASSIGNED_KEY ? '?' : initials(names.get(k) ?? k)}</span>
@@ -117,7 +128,12 @@ export function WorkloadStrip({ tasks: allTasks, geometry, container, metric, on
 
   return (
     <div className="load-strip" ref={stripRef} style={{ height: STRIP_H }}>
-      <div className="load-strip__lhs" style={{ width: box?.left ?? 0 }}>
+      {/* With the task list hidden the chart starts at the left edge: the
+          controls then float over the start of the plot */}
+      <div
+        className={`load-strip__lhs${(box?.left ?? 0) < 150 ? ' load-strip__lhs--overlay' : ''}`}
+        style={(box?.left ?? 0) < 150 ? undefined : { width: box?.left ?? 0 }}
+      >
         <div className="load-strip__title">
           Workload
           <button type="button" className="load-strip__close" onClick={onClose} aria-label="Hide workload">✕</button>
@@ -125,7 +141,7 @@ export function WorkloadStrip({ tasks: allTasks, geometry, container, metric, on
         <Seg label="Workload metric" value={metric} onChange={onMetric}
           options={[['count', 'Tasks'], ['hours', 'Est. hours']]} />
         <div className="load-strip__meta">
-          {metric === 'count' ? 'Tasks running per week' : 'Estimated hours per week'}
+          {metric === 'count' ? `Tasks running per ${unit}` : `Estimated hours per ${unit}`}
           {metric === 'hours' && result && result.missingEstimate.length > 0 && (
             <span title="Tasks without a ClickUp time estimate are not counted"> · {result.missingEstimate.length} w/o estimate</span>
           )}

@@ -8,6 +8,7 @@ import {
   RANGE_LABEL, Seg, Tooltip, UNASSIGNED_KEY, UNIT_LABEL, assigneeKeys, assigneeNames, fmtValue,
   initials, metricLabel, presetRange, useTooltip, type RangePreset,
 } from './shared'
+import { ProfilePicture, personIdOfKey } from '../Avatar'
 import { withoutBacklog, workdayLabel, type Settings } from '../../lib/settings'
 
 interface Props {
@@ -219,7 +220,14 @@ export function PeopleTab({ projects, today, settings }: Props) {
                   <tr key={row.key}>
                     <th className="pf-heat__name" scope="row">
                       <span className={`pf-avatar${row.key === UNASSIGNED_KEY ? ' pf-avatar--none' : ''}`} aria-hidden="true">
-                        {row.key === UNASSIGNED_KEY ? '?' : initials(row.name)}
+                        {row.key === UNASSIGNED_KEY ? '?' : (
+                          <ProfilePicture
+                            id={personIdOfKey(row.key)}
+                            size={24}
+                            enabled={settings.board.avatars.portfolio}
+                            fallback={initials(row.name)}
+                          />
+                        )}
                       </span>
                       <span className="pf-heat__person">{row.name}</span>
                       {row.over > 0 && row.key !== UNASSIGNED_KEY && (

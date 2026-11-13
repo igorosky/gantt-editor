@@ -1,6 +1,11 @@
 import date_utils from './date_utils';
 import { $, createSVG, animateSVG } from './svg_utils';
 
+// Local addition: avatars next to bars, and the connector dot
+const AVATAR_SIZE = 18;
+const CONNECT_GAP = 7;
+let avatar_seq = 0;
+
 export default class Bar {
     constructor(gantt, task) {
         this.set_defaults(gantt, task);
@@ -87,10 +92,103 @@ export default class Bar {
         if (this.task._span) this.draw_span();
         this.draw_label();
         this.draw_resize_handles();
+        this.draw_connect_handle();
 
         if (this.task.thumbnail) {
             this.draw_thumbnail();
         }
+        // Local addition: the assignees' avatars next to the bar
+        this.$avatars = null;
+        if (this.task._avatars && this.task._avatars.length) this.draw_avatars();
+    }
+
+    // Local addition: up to three avatars after the bar (after its label when
+    // the label sits outside), from task._avatars = [{ url?, initials,
+    // color }]. A picture that fails to load is removed, leaving the initials.
+    draw_avatars() {
+        const size = AVATAR_SIZE;
+        const list = this.task._avatars;
+        this.$avatars = createSVG('g', {
+            class: 'bar-avatars',
+            append_to: this.bar_group,
+        });
+        list.slice(0, 3).forEach((a, i) => {
+            const g = createSVG('g', {
+                class: 'bar-avatar',
+                transform: `translate(${i * (size - 6)}, 0)`,
+                append_to: this.$avatars,
+            });
+            const bg = createSVG('circle', { cx: 0, cy: 0, r: size / 2, class: 'bar-avatar__bg', append_to: g });
+            bg.style.fill = a.color || '#7c85f5';
+            const text = createSVG('text', { x: 0, y: 0, class: 'bar-avatar__text', append_to: g });
+            text.textContent = a.initials || '?';
+            if (a.url) {
+                const id = `bar-av-${++avatar_seq}`;
+                const clip = createSVG('clipPath', { id, append_to: g });
+                createSVG('circle', { cx: 0, cy: 0, r: size / 2, append_to: clip });
+                const img = createSVG('image', {
+                    x: -size / 2,
+                    y: -size / 2,
+                    width: size,
+                    height: size,
+                    preserveAspectRatio: 'xMidYMid slice',
+                    'clip-path': `url(#${id})`,
+                    append_to: g,
+                });
+                img.addEventListener('error', () => img.remove());
+                img.setAttribute('href', a.url);
+            }
+            const title = createSVG('title', { append_to: g });
+            title.textContent = a.name || '';
+        });
+        if (list.length > 3) {
+            const more = createSVG('text', {
+                x: 3 * (size - 6) - 2,
+                y: 0,
+                class: 'bar-avatar__more',
+                append_to: this.$avatars,
+            });
+            more.textContent = `+${list.length - 3}`;
+        }
+        this.update_avatars_position();
+    }
+
+    // Local addition: a dot right of the bar; dragging from it onto another
+    // bar links the two (index.js start_connect). Option connect_handles.
+    draw_connect_handle() {
+        this.$connect = null;
+        if (this.invalid || this.gantt.options.readonly || !this.gantt.options.connect_handles) return;
+        this.$connect = createSVG('circle', {
+            r: 5,
+            class: 'connect-handle',
+            append_to: this.handle_group,
+        });
+        const title = createSVG('title', { append_to: this.$connect });
+        title.textContent = 'Drag onto another task to link them';
+        this.update_connect_position();
+    }
+
+    update_connect_position() {
+        if (!this.$connect) return;
+        this.$connect.setAttribute('cx', this.$bar.getEndX() + CONNECT_GAP);
+        this.$connect.setAttribute('cy', this.$bar.getY() + this.$bar.getHeight() / 2);
+    }
+
+    // After the bar (and its connector dot), or after the label when it is
+    // drawn outside the bar
+    update_avatars_position() {
+        if (!this.$avatars) return;
+        const label = this.group.querySelector('.bar-label');
+        let x = this.$bar.getEndX() + (this.$connect ? CONNECT_GAP + 10 : 6);
+        if (label && label.classList.contains('big')) {
+            const box = label.getBBox();
+            x = box.x + box.width + 8;
+        }
+        const y = this.$bar.getY() + this.$bar.getHeight() / 2;
+        this.$avatars.setAttribute(
+            'transform',
+            `translate(${x + AVATAR_SIZE / 2}, ${y})`,
+        );
     }
 
     draw_bar() {
@@ -312,9 +410,11 @@ export default class Bar {
                         task: this.task,
                         target: this.$bar,
                     });
+                // Local fix: the bar may be gone (deleted from the keyboard
+                // while hovered) by the time the timer fires
                 this.gantt.$container
                     .querySelector(`.highlight-${task_id}`)
-                    .classList.remove('hide');
+                    ?.classList.remove('hide');
             }, 200);
         });
         $.on(this.group, 'mouseleave', () => {
@@ -323,11 +423,15 @@ export default class Bar {
                 this.gantt.popup?.hide?.();
             this.gantt.$container
                 .querySelector(`.highlight-${task_id}`)
-                .classList.add('hide');
+                ?.classList.add('hide');
         });
 
-        $.on(this.group, 'click', () => {
-            this.gantt.trigger_event('click', [this.task]);
+        // Local changes: a drop is not a click (action_completed is set by
+        // the drag end for a bar that moved), and the event goes along so
+        // the host can read the modifier keys
+        $.on(this.group, 'click', (e) => {
+            if (this.action_completed) return;
+            this.gantt.trigger_event('click', [this.task, e]);
         });
 
         $.on(this.group, 'dblclick', (e) => {
@@ -339,7 +443,7 @@ export default class Bar {
             if (this.gantt.popup)
                 this.gantt.popup.parent.classList.remove('hide');
 
-            this.gantt.trigger_event('double_click', [this.task]);
+            this.gantt.trigger_event('double_click', [this.task, e]);
         });
         let tapedTwice = false;
         $.on(this.group, 'touchstart', (e) => {
@@ -387,6 +491,7 @@ export default class Bar {
 
         this.update_label_position();
         this.update_handle_position();
+        this.update_connect_position();
         this.compute_duration();
         this.date_changed();
         this.update_arrow_position();
@@ -450,26 +555,43 @@ export default class Bar {
 
     set_action_completed() {
         this.action_completed = true;
-        setTimeout(() => (this.action_completed = false), 1000);
+        // Local change: 350 ms (was 1 s), long enough to swallow the click
+        // and double-click of the drop itself, short enough that a click on
+        // the just-dropped bar is not ignored
+        setTimeout(() => (this.action_completed = false), 350);
     }
 
     compute_start_end_date() {
         const bar = this.$bar;
+        const { column_width, step, unit } = this.gantt.config;
         // Local fix: x and width are snapped to whole units, but the float
         // math can give 60.99999 for 61 and date_utils.add parseInt's it,
-        // landing a day early. Round first.
-        const x_in_units = bar.getX() / this.gantt.config.column_width;
-        let new_start_date = date_utils.add(
-            this.gantt.gantt_start,
-            Math.round(x_in_units * this.gantt.config.step),
-            this.gantt.config.unit,
-        );
+        // landing a day early. Round first (x_to_date does).
+        const new_start_date = this.gantt.x_to_date(bar.getX());
+        if (unit === 'month') {
+            // Local fix: Month view rounded a drop to whole months. A drag
+            // (width unchanged since mousedown) keeps the length in days, a
+            // resize reads the day under the new end.
+            const dragged =
+                bar.owidth !== undefined &&
+                Math.abs(bar.getWidth() - bar.owidth) < 0.5;
+            const new_end_date = dragged
+                ? date_utils.add(
+                      new_start_date,
+                      Math.round(
+                          date_utils.diff(this.task._end, this.task._start, 'day'),
+                      ),
+                      'day',
+                  )
+                : this.gantt.x_to_date(bar.getX() + bar.getWidth());
+            return { new_start_date, new_end_date };
+        }
 
-        const width_in_units = bar.getWidth() / this.gantt.config.column_width;
+        const width_in_units = bar.getWidth() / column_width;
         const new_end_date = date_utils.add(
             new_start_date,
-            Math.round(width_in_units * this.gantt.config.step),
-            this.gantt.config.unit,
+            Math.round(width_in_units * step),
+            unit,
         );
 
         return { new_start_date, new_end_date };
@@ -547,7 +669,8 @@ export default class Bar {
             label = this.group.querySelector('.bar-label'),
             img = this.group.querySelector('.bar-img');
 
-        let padding = 5;
+        // Local change: an outside label starts after the connector dot
+        let padding = this.$connect ? CONNECT_GAP + 9 : 5;
         let x_offset_label_img = this.image_size + 10;
         const labelWidth = label.getBBox().width;
         const barWidth = bar.getWidth();
@@ -576,6 +699,7 @@ export default class Bar {
                 );
             }
         }
+        this.update_avatars_position();
     }
 
     update_handle_position() {

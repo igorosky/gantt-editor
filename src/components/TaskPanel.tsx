@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react'
+import type { ClickMods } from '../lib/selection'
+import { setHover } from '../lib/hover'
 import type { RefObject } from 'react'
 import type { Filter, GanttTask } from '../types'
 import { TaskRow } from './TaskRow'
 import { FilterBar, type StatusSource } from './FilterBar'
 import { GANTT_HEADER_HEIGHT } from '../constants'
 import {
-  ancestors, canBecomeTopLevel, canOutdent, indentTarget, moveTarget, TOP_LEVEL_BLOCKED,
-  type DropPosition, type Tree, type TreeRow,
+  canOutdent, indentTarget, moveTarget, type DropPosition, type Tree, type TreeRow,
 } from '../lib/tree'
 import type { Settings } from '../lib/settings'
 
@@ -22,13 +23,10 @@ interface Props {
   onAdd: () => void
   onClear: () => void
   onSort: () => void
-  onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<GanttTask>) => void
   onMove: (id: string, targetId: string, pos: DropPosition) => void
   onIndent: (id: string) => void
   onOutdent: (id: string) => void
-  onMakeTopLevel: (id: string) => void
-  onAddSubtask: (parentId: string) => void
   onToggleCollapsed: (id: string) => void
   onSetAllCollapsed: (collapsed: boolean) => void
   onOpenDetail: (id: string) => void
@@ -36,13 +34,22 @@ interface Props {
   criticalIds: Set<string>
   settings: Settings
   statusSource?: StatusSource
+  selectedIds: ReadonlySet<string>
+  onSelect: (id: string, mods: ClickMods) => void
+  onClearSelection: () => void
+  renameRequest: { id: string; n: number } | null
+  onOpenMenu: (id: string, x: number, y: number, align: 'left' | 'right') => void
+  menuTaskIds: ReadonlySet<string> // the tasks the open menu acts on
+  pathIds?: ReadonlySet<string> // a highlighted path: rows outside it are dimmed
+  lateStarts: ReadonlyMap<string, string[]> // task -> predecessors it starts before
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
-  onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
-  onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
-  statusSource,
+  onAdd, onClear, onSort, onUpdate, onMove, onIndent, onOutdent,
+  onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
+  statusSource, selectedIds, onSelect, onClearSelection, renameRequest,
+  onOpenMenu, menuTaskIds, pathIds, lateStarts,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -121,7 +128,14 @@ export function TaskPanel({
         statusSource={statusSource}
       />
 
-      <div className="task-panel__list" ref={listRef}>
+      <div
+        className="task-panel__list"
+        ref={listRef}
+        // A click on the empty space below the rows clears the selection
+        onClick={e => { if (e.target === e.currentTarget) onClearSelection() }}
+        onMouseOver={e => setHover((e.target as Element).closest?.('.task-row')?.getAttribute('data-task-id') ?? null)}
+        onMouseLeave={() => setHover(null)}
+      >
         {rows.length === 0 && (
           <p className="task-panel__empty">
             {filters.length > 0 ? 'No tasks match your filters.'
@@ -131,23 +145,20 @@ export function TaskPanel({
         )}
         {rows.map(row => {
           const { task } = row
-          const chain = ancestors(task.id, tree)
-          const root = chain[chain.length - 1]
           return (
             <TaskRow
               key={task.id}
               row={row}
               showToggles={hasParents}
               onUpdate={patch => onUpdate(task.id, patch)}
-              onRemove={() => onRemove(task.id)}
               onOpenDetail={() => onOpenDetail(task.id)}
               onToggleCollapsed={() => onToggleCollapsed(task.id)}
-              onAddSubtask={() => onAddSubtask(task.id)}
               onIndent={indentTarget(tree, task.id) ? () => onIndent(task.id) : undefined}
               onOutdent={canOutdent(tree, task.id) ? () => onOutdent(task.id) : undefined}
-              onMakeTopLevel={chain.length >= 2 && moveTarget(tree, task.id, root, 'after')
-                ? () => onMakeTopLevel(task.id) : undefined}
-              topLevelBlocked={chain.length > 0 && !canBecomeTopLevel(task) ? TOP_LEVEL_BLOCKED : undefined}
+              onOpenMenu={(x, y, align) => onOpenMenu(task.id, x, y, align)}
+              menuOpen={menuTaskIds.has(task.id)}
+              dimmed={!!pathIds && !pathIds.has(task.id)}
+              lateAfter={lateStarts.get(task.id)}
               onDragStart={() => { dragIdRef.current = task.id }}
               onDragOver={e => handleDragOver(e, row)}
               onDrop={handleDrop}
@@ -155,6 +166,9 @@ export function TaskPanel({
               dropPos={drop?.id === task.id ? drop.pos : null}
               isCritical={criticalIds.has(task.id)}
               settings={settings}
+              selected={selectedIds.has(task.id)}
+              onSelect={mods => onSelect(task.id, mods)}
+              renameSignal={renameRequest?.id === task.id ? renameRequest.n : undefined}
             />
           )
         })}

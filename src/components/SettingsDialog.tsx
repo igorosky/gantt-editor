@@ -37,7 +37,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
   const [amber, setAmber] = useState(pct(settings.rules.amberUnscheduledShare))
   const [msAs, setMsAs] = useState(settings.milestones.as)
   const [msTag, setMsTag] = useState(settings.milestones.tag)
-  const [statusColors, setStatusColors] = useState(settings.board.statusColors)
+  const [board, setBoard] = useState(settings.board)
 
   const keywordList = cleanNames(keywords.split(','))
   const isBacklogName = (name: string) => statuses.some(s => s.toLowerCase() === name.toLowerCase())
@@ -97,7 +97,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
     setAmber(pct(d.rules.amberUnscheduledShare))
     setMsAs(d.milestones.as)
     setMsTag(d.milestones.tag)
-    setStatusColors(d.board.statusColors)
+    setBoard(d.board)
   }
 
   function save() {
@@ -113,7 +113,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
       },
       // A blank tag falls back to the default
       milestones: { as: msAs, tag: msTag },
-      board: { statusColors },
+      board,
     }))
   }
 
@@ -144,14 +144,47 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
           <label className="settings__check">
             <input
               type="checkbox"
-              checked={statusColors}
-              onChange={e => setStatusColors(e.target.checked)}
+              checked={board.statusColors}
+              onChange={e => setBoard(b => ({ ...b, statusColors: e.target.checked }))}
             />
             Color tasks by status
           </label>
           <div className="clickup-modal__hint">
             Gantt bars take the ClickUp status color and the task list shows it as a stripe.
             Bar labels switch between black and white to stay readable.
+          </div>
+          <label className="settings__check">
+            <input
+              type="checkbox"
+              checked={board.dependencyWarnings}
+              onChange={e => setBoard(b => ({ ...b, dependencyWarnings: e.target.checked }))}
+            />
+            Warn when a task starts before its predecessor ends
+          </label>
+          <div className="clickup-modal__hint">
+            The link turns into a dashed red arrow and the task gets a warning; its menu offers
+            "Start after predecessors". A milestone may share its day with the tasks around it.
+          </div>
+          <div className="settings__subhead">ClickUp profile pictures</div>
+          <div className="settings__checks">
+            {([
+              ['rows', 'In the task list'],
+              ['bars', 'Next to gantt bars'],
+              ['tooltip', 'In the bar tooltip'],
+              ['portfolio', 'In the portfolio (People, Workload)'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="settings__check">
+                <input
+                  type="checkbox"
+                  checked={board.avatars[key]}
+                  onChange={e => setBoard(b => ({ ...b, avatars: { ...b.avatars, [key]: e.target.checked } }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="clickup-modal__hint">
+            Assignee pickers, chips and filters always show pictures; people without one get their initials.
           </div>
         </section>
 
