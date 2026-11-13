@@ -3691,3 +3691,77 @@
   .ctx-menu { animation: none; }
   .task-row, .gantt .bar-wrapper { transition: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   Dependencies: pickers in the popup, late-start links
+   --------------------------------------------------------------------------- */
+
+.tdp-deps-wrap {
+  position: relative;
+}
+
+.tsp {
+  width: 380px;
+}
+
+.tsp .tdp-picker-list {
+  max-height: 300px;
+}
+
+.tsp-item {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tsp-item--active {
+  background: var(--accent-soft);
+}
+
+.tsp-item--refused {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tsp-item__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+
+.tsp-item__main .tdp-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tsp-item__main mark {
+  background: none;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.tsp-item__ms {
+  color: var(--milestone);
+}
+
+.tsp-item__path {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tsp-item__side {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* A successor that starts before its predecessor ends */
+.gantt .arrow path.arrow--violation {
+  stroke: var(--critical);
+  stroke-dasharray: 5 3;
+}

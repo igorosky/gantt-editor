@@ -98,6 +98,7 @@ interface Props {
   settings: Settings
   onOpenMenu: (id: string, x: number, y: number) => void
   path?: { ids: ReadonlySet<string>; edges: ReadonlySet<string>; info: PathInfo }
+  violatedEdges?: ReadonlySet<string> // links whose successor starts too early
 }
 
 export function GanttPanel({
@@ -131,6 +132,7 @@ export function GanttPanel({
   settings,
   onOpenMenu,
   path,
+  violatedEdges,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -266,6 +268,7 @@ export function GanttPanel({
       const to = p.getAttribute('data-to')!
       const key = edgeKey(from, to)
       p.classList.toggle('arrow--critical', criticalEdges.has(key))
+      p.classList.toggle('arrow--violation', !!violatedEdges?.has(key))
       const out = selectedIds.has(from)
       const into = selectedIds.has(to)
       const onPath = !!path?.edges.has(key)
@@ -565,7 +568,7 @@ export function GanttPanel({
   // Selection and path changes restyle in place
   useEffect(() => {
     applyDecorations()
-  }, [selectedIds, path]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, path, violatedEdges]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Day / Week / Month: dates computed fresh for the new unit (a refresh
   // would keep the old view's first date, e.g. mid-month in Month view),

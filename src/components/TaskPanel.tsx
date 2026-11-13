@@ -42,6 +42,7 @@ interface Props {
   onOpenMenu: (id: string, x: number, y: number, align: 'left' | 'right') => void
   menuTaskIds: ReadonlySet<string> // the tasks the open menu acts on
   pathIds?: ReadonlySet<string> // a highlighted path: rows outside it are dimmed
+  lateStarts: ReadonlyMap<string, string[]> // task -> predecessors it starts before
 }
 
 export function TaskPanel({
@@ -49,7 +50,7 @@ export function TaskPanel({
   onAdd, onClear, onSort, onUpdate, onMove, onIndent, onOutdent,
   onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
   statusSource, onHide, selectedIds, onSelect, onClearSelection, renameRequest,
-  onOpenMenu, menuTaskIds, pathIds,
+  onOpenMenu, menuTaskIds, pathIds, lateStarts,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -167,6 +168,7 @@ export function TaskPanel({
               onOpenMenu={(x, y, align) => onOpenMenu(task.id, x, y, align)}
               menuOpen={menuTaskIds.has(task.id)}
               dimmed={!!pathIds && !pathIds.has(task.id)}
+              lateAfter={lateStarts.get(task.id)}
               onDragStart={() => { dragIdRef.current = task.id }}
               onDragOver={e => handleDragOver(e, row)}
               onDrop={handleDrop}

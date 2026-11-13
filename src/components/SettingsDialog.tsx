@@ -153,6 +153,18 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
             Gantt bars take the ClickUp status color and the task list shows it as a stripe.
             Bar labels switch between black and white to stay readable.
           </div>
+          <label className="settings__check">
+            <input
+              type="checkbox"
+              checked={board.dependencyWarnings}
+              onChange={e => setBoard(b => ({ ...b, dependencyWarnings: e.target.checked }))}
+            />
+            Warn when a task starts before its predecessor ends
+          </label>
+          <div className="clickup-modal__hint">
+            The link turns into a dashed red arrow and the task gets a warning; its menu offers
+            "Start after predecessors". A milestone may share its day with the tasks around it.
+          </div>
         </section>
 
         <section className="settings__section">

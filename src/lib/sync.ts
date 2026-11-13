@@ -4,6 +4,7 @@ import { fmtDate } from './dates'
 import { clipText } from './syncLog'
 import type { DeletionCandidate } from './deletions'
 import { DEFAULT_SETTINGS, sameTag, type MilestoneStyle } from './settings'
+import { sameStatus } from './statuses'
 import {
   addDependency,
   addTagToTask,
@@ -667,8 +668,22 @@ export async function pushToClickUp(
           entries.push({ kind: 'error', task: u.name, taskId: u.id, clickupId: created.id, detail: `Tag "${tag.name}" failed: ${errText(e)}` })
         }
       }
-      // The create body has no status, so ClickUp's default is the agreed one
-      fieldBase.set(u.id, syncBaseOf({ ...u, ...copyFields(mapRemoteTask(created, u.id), ['status']), type, tags }))
+      // The create body has no status: ClickUp gives its default. A status
+      // picked on the board follows in an update; if that fails, ClickUp's
+      // default stays the agreed one, so the next push sends it again.
+      let statusFrom: RemoteTask = created
+      if (u.status && !sameStatus(u.status, created.status?.status)) {
+        try {
+          const r = await updateTask(token, created.id, { status: u.status })
+          seen(r)
+          statusFrom = r?.status?.status
+            ? r
+            : { ...created, status: { status: u.status, color: u.statusColor, type: u.statusType } }
+        } catch (e) {
+          entries.push({ kind: 'error', task: u.name, taskId: u.id, clickupId: created.id, detail: `Status "${u.status}" failed: ${errText(e)}` })
+        }
+      }
+      fieldBase.set(u.id, syncBaseOf({ ...u, ...copyFields(mapRemoteTask(statusFrom, u.id), ['status']), type, tags }))
     } catch (e) {
       entries.push({ kind: 'error', task: u.name, taskId: u.id, detail: `Create failed: ${errText(e)}` })
     }

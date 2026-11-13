@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Assignee, Filter, FilterType, GanttTask, Tag } from '../types'
-import { getListStatuses } from '../lib/clickup'
+import { fetchListStatuses } from '../hooks/useListStatuses'
 
 function readableFg(bg?: string): string | undefined {
   if (!bg) return undefined
@@ -192,7 +192,7 @@ function StatusValueEditor({ value, onChange, allTasks, statusSource }: {
 
   useEffect(() => {
     if (!token || !listId) return
-    getListStatuses(token, listId)
+    fetchListStatuses(token, listId)
       .then(ss => setFetchedColors(new Map(ss.map(s => [s.status, s.color]))))
       .catch(() => {})
   }, [token, listId])

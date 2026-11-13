@@ -31,6 +31,7 @@ interface Props {
   onOpenMenu: (x: number, y: number, align: 'left' | 'right') => void
   menuOpen: boolean
   dimmed: boolean // outside a highlighted path
+  lateAfter?: string[] // names of predecessors this task starts before (warning)
   onDragStart: () => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: () => void
@@ -45,7 +46,7 @@ interface Props {
 
 export function TaskRow({
   row, showToggles, onUpdate, onOpenDetail, onToggleCollapsed,
-  onIndent, onOutdent, onOpenMenu, menuOpen, dimmed,
+  onIndent, onOutdent, onOpenMenu, menuOpen, dimmed, lateAfter,
   onDragStart, onDragOver, onDrop, onDragEnd, dropPos, isCritical, settings,
   selected, onSelect, renameSignal,
 }: Props) {
@@ -74,7 +75,13 @@ export function TaskRow({
   }
 
   const ms = isMilestone(task)
-  const warnings = getTaskWarnings(task, settings)
+  // Content warnings, plus a late start against predecessors (computed by
+  // the board, outside the shared warning rules the portfolio uses)
+  const warnings: Array<{ message: string }> = lateAfter?.length
+    ? [...getTaskWarnings(task, settings), {
+        message: `Starts before ${lateAfter.map(n => `"${n}"`).join(', ')} ${lateAfter.length === 1 ? 'ends' : 'end'}`,
+      }]
+    : getTaskWarnings(task, settings)
   const late = daysLate(task, new Date())
   const lateNote = late ? ` - overdue by ${late} day${late === 1 ? '' : 's'}` : ''
   const look = settings.board.statusColors ? statusBarStyle(task.statusColor) : null

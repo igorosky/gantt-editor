@@ -24,8 +24,10 @@ import { PeopleContext, type Person } from './components/Avatar'
 import { usePeople } from './hooks/usePeople'
 import { useListStatuses } from './hooks/useListStatuses'
 import { buildTaskMenu } from './lib/taskMenu'
-import { dependencyPath, dependencyRefusal, snapAfterPredecessors, type PathDirection } from './lib/depGraph'
-import { statusPatch } from './lib/statuses'
+import {
+  dependencyPath, dependencyRefusal, dependencyViolations, snapAfterPredecessors, violatedPredecessors, type PathDirection,
+} from './lib/depGraph'
+import { defaultStatus, statusPatch } from './lib/statuses'
 import { taskLabel } from './lib/taskPatch'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
@@ -492,13 +494,20 @@ export default function App() {
     [tasks, updateTask],
   )
 
+  // A new task on a linked board starts in the list's first status, as in
+  // ClickUp (the popup fills it in if the statuses are still loading)
+  const draftStatus = useMemo(() => {
+    const s = board.listId && listStatuses.statuses ? defaultStatus(listStatuses.statuses) : undefined
+    return s ? statusPatch(s) : {}
+  }, [board.listId, listStatuses.statuses])
+
   const handleAddTask = useCallback(() => {
     const t = new Date()
     t.setHours(0, 0, 0, 0)
     const end = new Date(t)
     end.setDate(end.getDate() + 7)
-    setNewTaskDraft({ id: crypto.randomUUID(), name: 'New task', start: t, end, progress: 0 })
-  }, [])
+    setNewTaskDraft({ id: crypto.randomUUID(), name: 'New task', start: t, end, progress: 0, ...draftStatus })
+  }, [draftStatus])
 
   // A new subtask starts on its parent's dates
   const handleAddSubtask = useCallback((parentId: string) => {
@@ -510,15 +519,41 @@ export default function App() {
     const start = p?.start ?? p?.end ?? t
     const end = p?.end ?? p?.start ?? week
     setDetailTaskId(null)
-    setNewTaskDraft({ id: crypto.randomUUID(), name: 'New subtask', start, end, progress: 0, parentId })
-  }, [tasks])
+    setNewTaskDraft({ id: crypto.randomUUID(), name: 'New subtask', start, end, progress: 0, parentId, ...draftStatus })
+  }, [tasks, draftStatus])
 
-  const handleCommitDraft = useCallback(() => {
+  // The new task and the links of its successors land in one undo step
+  const handleCommitDraft = useCallback((successors: string[] = []) => {
     if (!newTaskDraft) return
-    commitTask(newTaskDraft)
+    commitTask(newTaskDraft, successors)
     if (newTaskDraft.parentId) expand(newTaskDraft.parentId)
     setNewTaskDraft(null)
   }, [newTaskDraft, commitTask, expand])
+
+  // `succ` depends on `pred`, or no longer does; a link that would close a
+  // loop is refused with a note
+  const setLink = useCallback((pred: string, succ: string, on: boolean) => {
+    const target = tasks.find(t => t.id === succ)
+    if (!target) return
+    const deps = target.dependencies ?? []
+    if (!on) {
+      if (deps.includes(pred)) {
+        updateTask(succ, { dependencies: deps.filter(d => d !== pred) }, {
+          label: `Unlink ${taskLabel(tree.byId.get(pred))} -> ${taskLabel(target)}`,
+        })
+      }
+      return
+    }
+    const why = dependencyRefusal(tasks, pred, succ)
+    if (why === 'Already linked') return
+    if (why) {
+      toast.push(`${why}: ${taskLabel(tree.byId.get(pred))} -> ${taskLabel(target)}`, { kind: 'error' })
+      return
+    }
+    updateTask(succ, { dependencies: [...deps, pred] }, {
+      label: `Link ${taskLabel(tree.byId.get(pred))} -> ${taskLabel(target)}`,
+    })
+  }, [tasks, tree, updateTask, toast.push])
 
   // Deletes tasks with their subtasks (asks when that is more than one task),
   // then offers an undo while nothing else was done
@@ -635,19 +670,31 @@ export default function App() {
     setNewTaskDraft(prev => prev ? { ...prev, ...patch } : null)
   }, [])
 
+  // Connect mode: the second click adds the link, or removes an existing one
   const handleToggleDependency = useCallback(
     (sourceId: string, targetId: string) => {
       const target = tasks.find(t => t.id === targetId)
       if (!target) return
-      const deps = target.dependencies ?? []
-      updateTask(targetId, {
-        dependencies: deps.includes(sourceId)
-          ? deps.filter(d => d !== sourceId)
-          : [...deps, sourceId],
-      })
+      setLink(sourceId, targetId, !(target.dependencies ?? []).includes(sourceId))
     },
-    [tasks, updateTask],
+    [tasks, setLink],
   )
+
+  // Late starts (a successor starting before its predecessor ends), when the
+  // warning is on
+  const violations = useMemo(
+    () => (settings.board.dependencyWarnings ? dependencyViolations(tasks) : null),
+    [tasks, settings.board.dependencyWarnings],
+  )
+  const lateStarts = useMemo(() => {
+    const out = new Map<string, string[]>()
+    if (!violations?.size) return out
+    for (const t of tasks) {
+      const late = violatedPredecessors(tasks, t.id)
+      if (late.length) out.set(t.id, late.map(p => p.name))
+    }
+    return out
+  }, [tasks, violations])
 
   const handleContainerReady = useCallback((ganttContainer: HTMLElement) => {
     setGanttContainer(ganttContainer)
@@ -1008,6 +1055,7 @@ export default function App() {
             onOpenMenu={openMenu}
             menuTaskIds={menuIds}
             pathIds={path?.ids}
+            lateStarts={lateStarts}
             criticalIds={critical.taskIds}
             settings={settings}
             statusSource={statusSource}
@@ -1049,6 +1097,7 @@ export default function App() {
             onOpenDetail={openDetail}
             settings={settings}
             onOpenMenu={(id, x, y) => openMenu(id, x, y)}
+            violatedEdges={violations ?? undefined}
             path={path && pathFocus ? {
               ids: path.ids,
               edges: path.edges,
@@ -1223,8 +1272,9 @@ export default function App() {
             onClose={() => setDetailTaskId(null)}
             onUpdate={patch => handleTaskUpdate(detailTaskId, patch)}
             onSetParent={parentId => setTaskParent(detailTaskId, parentId)}
-            onOpenTask={id => setDetailTaskId(id)}
+            onOpenTask={id => openDetail(id)}
             onAddSubtask={() => handleAddSubtask(detailTaskId)}
+            onSetSuccessor={(id, on) => setLink(detailTaskId, id, on)}
             clickupToken={config?.token}
             clickupTeamId={config?.teamId}
             clickupListId={board.listId}

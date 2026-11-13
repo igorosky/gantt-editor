@@ -14,6 +14,9 @@ import { AssigneePicker } from './AssigneePicker'
 import { TagPicker } from './TagPicker'
 import { DatePicker } from './DatePicker'
 import { ParentPicker } from './ParentPicker'
+import { TaskSearchPicker } from './TaskSearchPicker'
+import { refusedPredecessors, refusedSuccessors } from '../lib/depGraph'
+import { defaultStatus, statusPatch } from '../lib/statuses'
 
 interface Props {
   task: GanttTask
@@ -24,7 +27,10 @@ interface Props {
   onSetParent: (parentId: string | undefined) => void
   onOpenTask?: (id: string) => void
   onAddSubtask?: () => void
-  onCommit?: () => void
+  // Create mode: the new task's successors are kept here until it exists
+  onCommit?: (successors: string[]) => void
+  // Existing task: makes `id` depend on this task, or not
+  onSetSuccessor?: (id: string, on: boolean) => void
   isCreateMode?: boolean
   clickupToken?: string
   clickupTeamId?: string
@@ -255,8 +261,8 @@ const fmtSpan = (s?: Date, e?: Date): string =>
   s && e && !sameDay(s, e) ? `${fmtShort(s)} - ${fmtShort(e)}` : s || e ? fmtShort((e ?? s)!) : 'no dates'
 
 export function TaskDetailPopup({
-  task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, isCreateMode,
-  clickupToken, clickupListId, clickupSpaceId, milestoneTag, people,
+  task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, onSetSuccessor, isCreateMode,
+  clickupToken, clickupListId, clickupSpaceId, milestoneTag, people, initialPicker,
 }: Props) {
   const [nameDraft, setNameDraft] = useState(task.name)
   const [descDraft, setDescDraft] = useState(task.description ?? '')
@@ -267,6 +273,11 @@ export function TaskDetailPopup({
   const [tagsError, setTagsError] = useState<string | null>(null)
   const [parentPickerOpen, setParentPickerOpen] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  // Predecessor / successor search open
+  const [depPicker, setDepPicker] = useState<'pred' | 'succ' | null>(initialPicker ?? null)
+  useEffect(() => { if (initialPicker) setDepPicker(initialPicker) }, [initialPicker, task.id])
+  // Create mode: successors of the task that does not exist yet
+  const [newSuccessors, setNewSuccessors] = useState<string[]>([])
   const titleInputRef = useRef<HTMLInputElement>(null)
   // The draft as it was opened (App remounts the popup for every new draft)
   const initialRef = useRef(task)
@@ -296,7 +307,57 @@ export function TaskDetailPopup({
     draftChanged(initialRef.current, task)
     || nameDraft.trim() !== task.name.trim()
     || descDraft.trim() !== (task.description ?? '').trim()
+    || newSuccessors.length > 0
   )
+
+  // A new task on a linked board starts in the list's first status (what
+  // ClickUp would give it). Usually the board already put it in the draft;
+  // if the statuses arrive after the popup opened, the draft as opened is
+  // re-based too, so the default alone never counts as an edit.
+  const taskRef = useRef(task)
+  taskRef.current = task
+  useEffect(() => {
+    if (!isCreateMode || task.status || !clickupToken || !clickupListId) return
+    let live = true
+    fetchListStatuses(clickupToken, clickupListId).then(list => {
+      const s = defaultStatus(list)
+      if (!live || !s || taskRef.current.status) return
+      const patch = statusPatch(s)
+      initialRef.current = { ...initialRef.current, ...patch }
+      onUpdate(patch)
+    }).catch(() => { /* no statuses: the draft stays without one */ })
+    return () => { live = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The board as it would be with this task (a draft is not on it yet, nor
+  // are its buffered successors' links), for the loop checks of the pickers
+  const graph = useMemo(() => {
+    if (!isCreateMode) return allTasks.map(t => (t.id === task.id ? task : t))
+    const after = new Set(newSuccessors)
+    return [
+      ...allTasks.map(t => (after.has(t.id) ? { ...t, dependencies: [...(t.dependencies ?? []), task.id] } : t)),
+      task,
+    ]
+  }, [allTasks, task, isCreateMode, newSuccessors])
+  const refusedPreds = useMemo(() => (depPicker === 'pred' ? refusedPredecessors(graph, task.id) : new Map()), [graph, task.id, depPicker])
+  const refusedSuccs = useMemo(() => (depPicker === 'succ' ? refusedSuccessors(graph, task.id) : new Map()), [graph, task.id, depPicker])
+  const successors = isCreateMode
+    ? newSuccessors.map(id => allTasks.find(t => t.id === id)).filter((t): t is GanttTask => !!t)
+    : allTasks.filter(t => (t.dependencies ?? []).includes(task.id))
+
+  const addPredecessor = (id: string) => {
+    onUpdate({ dependencies: [...(task.dependencies ?? []), id] })
+    setDepPicker(null)
+  }
+  const addSuccessor = (id: string) => {
+    if (isCreateMode) setNewSuccessors(s => (s.includes(id) ? s : [...s, id]))
+    else onSetSuccessor?.(id, true)
+    setDepPicker(null)
+  }
+  const removeSuccessor = (id: string) => {
+    if (isCreateMode) setNewSuccessors(s => s.filter(x => x !== id))
+    else onSetSuccessor?.(id, false)
+  }
 
   const requestClose = () => {
     if (dirty) setConfirmDiscard(true)
@@ -464,7 +525,7 @@ export function TaskDetailPopup({
               className="tdp-title"
               value={nameDraft}
               onChange={e => setNameDraft(e.target.value)}
-              onBlur={() => { const v = nameDraft.trim(); onUpdate({ name: v || task.name }) }}
+              onBlur={() => { const v = nameDraft.trim() || task.name; if (v !== task.name) onUpdate({ name: v }) }}
               onKeyDown={e => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                 if (e.key === 'Escape') setNameDraft(task.name)
@@ -614,16 +675,69 @@ export function TaskDetailPopup({
               )}
             </div>
 
-            {/* Dependencies */}
+            {/* Dependencies: predecessors and successors */}
             <div className="tdp-label">Depends on</div>
-            <div className="tdp-value">
+            <div className="tdp-value tdp-deps-wrap">
               {deps.length === 0 && <span className="tdp-empty">—</span>}
               {deps.map(d => (
                 <span key={d.id} className="tdp-dep-chip">
-                  {d.name}
-                  <span className="tdp-dep-x" onClick={() => removeDep(d.id)} title="Remove dependency">×</span>
+                  {onOpenTask && !isCreateMode
+                    ? <button type="button" className="tdp-link" onClick={() => onOpenTask(d.id)} title="Open this task">{d.name}</button>
+                    : d.name}
+                  <span className="tdp-dep-x" onClick={() => removeDep(d.id)} title="Remove dependency" role="button" aria-label={`Remove ${d.name} from predecessors`}>×</span>
                 </span>
               ))}
+              <button
+                type="button"
+                className="tdp-add-assignee-btn"
+                onClick={e => { e.stopPropagation(); setDepPicker('pred') }}
+                aria-label="Add predecessor"
+              >
+                + Add
+              </button>
+              {depPicker === 'pred' && (
+                <TaskSearchPicker
+                  tasks={allTasks}
+                  refused={refusedPreds}
+                  onPick={addPredecessor}
+                  onClose={() => setDepPicker(null)}
+                  placeholder="Find a predecessor…"
+                  label="Add predecessor"
+                />
+              )}
+            </div>
+
+            <div className="tdp-label">Blocks</div>
+            <div className="tdp-value tdp-deps-wrap">
+              {successors.length === 0 && <span className="tdp-empty">—</span>}
+              {successors.map(d => (
+                <span key={d.id} className="tdp-dep-chip">
+                  {onOpenTask && !isCreateMode
+                    ? <button type="button" className="tdp-link" onClick={() => onOpenTask(d.id)} title="Open this task">{d.name}</button>
+                    : d.name}
+                  <span className="tdp-dep-x" onClick={() => removeSuccessor(d.id)} title="Remove dependency" role="button" aria-label={`Remove ${d.name} from successors`}>×</span>
+                </span>
+              ))}
+              {(isCreateMode || onSetSuccessor) && (
+                <button
+                  type="button"
+                  className="tdp-add-assignee-btn"
+                  onClick={e => { e.stopPropagation(); setDepPicker('succ') }}
+                  aria-label="Add successor"
+                >
+                  + Add
+                </button>
+              )}
+              {depPicker === 'succ' && (
+                <TaskSearchPicker
+                  tasks={allTasks}
+                  refused={refusedSuccs}
+                  onPick={addSuccessor}
+                  onClose={() => setDepPicker(null)}
+                  placeholder="Find a successor…"
+                  label="Add successor"
+                />
+              )}
             </div>
           </div>
 
@@ -680,7 +794,7 @@ export function TaskDetailPopup({
               placeholder="Add a description…"
               value={descDraft}
               onChange={e => setDescDraft(e.target.value)}
-              onBlur={() => onUpdate({ description: descDraft })}
+              onBlur={() => { if (descDraft !== (task.description ?? '')) onUpdate({ description: descDraft }) }}
             />
           </div>
         </div>
@@ -693,7 +807,7 @@ export function TaskDetailPopup({
               onClick={() => {
                 const trimmed = nameDraft.trim()
                 if (trimmed && trimmed !== task.name) onUpdate({ name: trimmed })
-                onCommit?.()
+                onCommit?.(newSuccessors)
               }}
             >
               {ms ? 'Create milestone' : 'Create task'}
