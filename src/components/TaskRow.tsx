@@ -8,6 +8,8 @@ import { daysLate } from '../lib/portfolio'
 import { statusBarStyle } from '../lib/color'
 import type { Settings } from '../lib/settings'
 import type { DropPosition, TreeRow } from '../lib/tree'
+import type { ClickMods } from '../lib/selection'
+import { modKey } from '../lib/keys'
 import { DatePicker } from './DatePicker'
 import { TaskWarnings } from './TaskWarnings'
 
@@ -36,6 +38,9 @@ interface Props {
   dropPos: DropPosition | null
   isCritical: boolean
   settings: Settings
+  selected: boolean
+  onSelect: (mods: ClickMods) => void
+  renameSignal?: number // a new value starts renaming (F2, menu Rename)
 }
 
 interface MenuItem {
@@ -130,6 +135,7 @@ export function TaskRow({
   row, showToggles, onUpdate, onRemove, onOpenDetail, onToggleCollapsed, onAddSubtask,
   onIndent, onOutdent, onMakeTopLevel, topLevelBlocked,
   onDragStart, onDragOver, onDrop, onDragEnd, dropPos, isCritical, settings,
+  selected, onSelect, renameSignal,
 }: Props) {
   const { task, depth, childCount, doneChildren, collapsed, context } = row
   const [editing, setEditing] = useState(false)
@@ -144,10 +150,14 @@ export function TaskRow({
     if (!editing) setDraft(task.name)
   }, [task.name, editing])
 
+  useEffect(() => {
+    if (renameSignal !== undefined) setEditing(true)
+  }, [renameSignal])
+
   function commitName() {
     const trimmed = draft.trim() || task.name
     setDraft(trimmed)
-    onUpdate({ name: trimmed })
+    if (trimmed !== task.name) onUpdate({ name: trimmed })
     setEditing(false)
   }
 
@@ -175,8 +185,19 @@ export function TaskRow({
 
   return (
     <div
-      className={`task-row${dropPos ? ` task-row--drop-${dropPos}` : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}${late ? ' task-row--overdue' : ''}${childCount ? ' task-row--parent' : ''}${context ? ' task-row--context' : ''}`}
+      className={`task-row${dropPos ? ` task-row--drop-${dropPos}` : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}${late ? ' task-row--overdue' : ''}${childCount ? ' task-row--parent' : ''}${context ? ' task-row--context' : ''}${selected ? ' task-row--selected' : ''}`}
       style={style}
+      data-task-id={task.id}
+      aria-selected={selected}
+      onMouseDown={e => {
+        // Shift+click selects a range, not text
+        if (e.shiftKey && !(e.target as Element).closest('input, textarea')) e.preventDefault()
+      }}
+      onClick={e => {
+        // Controls in the row do their own thing
+        if ((e.target as Element).closest('button, input, textarea, select, a, .task-row__dates')) return
+        onSelect({ shift: e.shiftKey, toggle: modKey(e) })
+      }}
       title={context ? 'Shown because a subtask matches the filters' : undefined}
       draggable={!editing}
       onDragStart={e => {
@@ -226,8 +247,9 @@ export function TaskRow({
             onChange={e => setDraft(e.target.value)}
             onBlur={commitName}
             onKeyDown={e => {
-              if (e.key === 'Enter') commitName()
-              if (e.key === 'Escape') { setDraft(task.name); setEditing(false) }
+              // Handled here: the board's own Enter / Escape must not act too
+              if (e.key === 'Enter') { e.preventDefault(); commitName() }
+              if (e.key === 'Escape') { e.preventDefault(); setDraft(task.name); setEditing(false) }
               if (e.key === 'Tab') {
                 // Tab nests under the task above, Shift+Tab moves up a level
                 e.preventDefault()
@@ -240,8 +262,8 @@ export function TaskRow({
         ) : (
           <span
             className="task-row__name-text"
-            onClick={() => setEditing(true)}
-            title="Click to rename"
+            onDoubleClick={() => setEditing(true)}
+            title="Double-click to rename (F2)"
           >
             {task.name}
           </span>

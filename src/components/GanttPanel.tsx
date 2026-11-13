@@ -9,6 +9,11 @@ import {
 } from '../lib/tree'
 import { daysBetween, isoDay, shiftDays, type Calendar } from '../lib/dates'
 import { statusBarStyle } from '../lib/color'
+import type { ClickMods } from '../lib/selection'
+import { modKey } from '../lib/keys'
+import { reapplyHover, setHover } from '../lib/hover'
+import type { Settings } from '../lib/settings'
+import { BarTooltip } from './BarTooltip'
 
 // Column layout of the rendered chart, for widgets drawn in step with it
 export interface GanttGeometry {
@@ -80,6 +85,11 @@ interface Props {
   onShowLeft: () => void
   onAddTask: () => void
   filterInfo?: FilterInfo // filters active
+  selectedIds: ReadonlySet<string>
+  onSelect: (id: string, mods: ClickMods) => void
+  onClearSelection: () => void
+  onOpenDetail: (id: string) => void
+  settings: Settings
 }
 
 export function GanttPanel({
@@ -106,6 +116,11 @@ export function GanttPanel({
   onShowLeft,
   onAddTask,
   filterInfo,
+  selectedIds,
+  onSelect,
+  onClearSelection,
+  onOpenDetail,
+  settings,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -117,6 +132,9 @@ export function GanttPanel({
   const onGeometryRef = useRef(onGeometry)
   const allTasksRef = useRef(allTasks)
   const calendarRef = useRef(calendar)
+  const onSelectRef = useRef(onSelect)
+  const onClearSelectionRef = useRef(onClearSelection)
+  const onOpenDetailRef = useRef(onOpenDetail)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
@@ -124,7 +142,16 @@ export function GanttPanel({
     onGeometryRef.current = onGeometry
     allTasksRef.current = allTasks
     calendarRef.current = calendar
+    onSelectRef.current = onSelect
+    onClearSelectionRef.current = onClearSelection
+    onOpenDetailRef.current = onOpenDetail
   })
+  // When the last drag ended: the click that follows a drop is not a click
+  // on the empty chart
+  const lastDragEndRef = useRef(0)
+  // Hover tooltip: the bar under the pointer, after a short delay
+  const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null)
+  const tipTimerRef = useRef<number | undefined>(undefined)
   // Calendar the live chart was built or last re-rendered with
   const appliedCalendarRef = useRef('')
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
@@ -179,9 +206,13 @@ export function GanttPanel({
   // This ref is reassigned every render so the gantt on_click callback always
   // has access to up-to-date closures (connectModeRef etc. are refs so stale
   // values are not an issue, but onToggleDependencyRef is updated here too).
-  const ganttClickRef = useRef<(task: FrappeGanttNS.Task) => void>(null!)
-  ganttClickRef.current = (task: FrappeGanttNS.Task) => {
-    if (!connectModeRef.current || !task.id) return
+  const ganttClickRef = useRef<(task: FrappeGanttNS.Task, e?: MouseEvent) => void>(null!)
+  ganttClickRef.current = (task: FrappeGanttNS.Task, e?: MouseEvent) => {
+    if (!task.id) return
+    if (!connectModeRef.current) {
+      onSelectRef.current(task.id, { shift: !!e?.shiftKey, toggle: !!e && modKey(e) })
+      return
+    }
     const src = connectSourceRef.current
 
     if (!src) {
@@ -211,12 +242,23 @@ export function GanttPanel({
   // padding on scroll), so everything is re-marked after each one. Never
   // through refresh: these change without the tasks changing.
   function applyDecorations() {
-    containerRef.current
-      ?.querySelectorAll<SVGPathElement>('path[data-from][data-to]')
-      .forEach(p => {
-        const key = edgeKey(p.getAttribute('data-from')!, p.getAttribute('data-to')!)
-        p.classList.toggle('arrow--critical', criticalEdges.has(key))
-      })
+    const root = containerRef.current
+    if (!root) return
+    root.querySelectorAll<SVGGElement>('.bar-wrapper[data-id]').forEach(el => {
+      el.classList.toggle('is-selected', selectedIds.has(el.getAttribute('data-id')!))
+    })
+    root.querySelectorAll<SVGPathElement>('path[data-from][data-to]').forEach(p => {
+      const from = p.getAttribute('data-from')!
+      const to = p.getAttribute('data-to')!
+      p.classList.toggle('arrow--critical', criticalEdges.has(edgeKey(from, to)))
+      const out = selectedIds.has(from)
+      const into = selectedIds.has(to)
+      p.classList.toggle('arrow--sel-out', out)
+      p.classList.toggle('arrow--sel-in', into)
+      // Drawn last, so the highlighted arrows sit on top of the others
+      if ((out || into) && p.parentNode && p !== p.parentNode.lastChild) p.parentNode.appendChild(p)
+    })
+    reapplyHover()
   }
   const decorateRef = useRef(applyDecorations)
   decorateRef.current = applyDecorations
@@ -241,14 +283,17 @@ export function GanttPanel({
     }
   }
 
-  // Escape cancels connect mode
+  // Escape cancels connect mode. Capture phase, so it runs before the
+  // board's own Escape (clear the selection), which sees it handled.
   useEffect(() => {
     if (!connectMode) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') toggleConnectMode()
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      e.preventDefault()
+      toggleConnectMode()
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [connectMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -403,12 +448,18 @@ export function GanttPanel({
             }
           }
         },
-        on_click: (task) => ganttClickRef.current(task),
+        on_click: (task: FrappeGanttNS.Task, e?: MouseEvent) => ganttClickRef.current(task, e),
         // Fork events (not in @types/frappe-gantt): pointer released after a
         // drag; any render, including ones frappe starts on its own
         ...{
-          on_drag_end: () => { if (refreshPendingRef.current) bumpDropCount() },
+          on_drag_end: (moved?: boolean) => {
+            if (moved) lastDragEndRef.current = performance.now()
+            if (refreshPendingRef.current) bumpDropCount()
+          },
           on_render: () => decorateRef.current(),
+          on_double_click: (task: FrappeGanttNS.Task) => {
+            if (!connectModeRef.current && task.id) onOpenDetailRef.current(task.id)
+          },
         },
       })
 
@@ -417,8 +468,48 @@ export function GanttPanel({
         ganttContainer.style.height = `${panelHeight}px`
         ganttContainer.addEventListener('scroll', emitGeometry, { passive: true })
         ganttContainer.addEventListener('mousedown', e => {
+          window.clearTimeout(tipTimerRef.current)
+          setTip(null)
           if ((e.target as Element).closest?.('.bar-wrapper')) gestureRef.current++
         }, true)
+        // A click on the empty chart clears the selection (not the click
+        // that ends a drag, nor any click in connect mode)
+        ganttContainer.addEventListener('click', e => {
+          const t = e.target as Element
+          if (connectModeRef.current || t.closest?.('.bar-wrapper') || !t.closest?.('svg')) return
+          if (performance.now() - lastDragEndRef.current < 300) return
+          onClearSelectionRef.current()
+        })
+        // Hover: row cross-highlight at once, the tooltip after a pause
+        ganttContainer.addEventListener('mouseover', e => {
+          const wrapper = (e.target as Element).closest?.('.bar-wrapper')
+          const id = wrapper?.getAttribute('data-id') ?? null
+          setHover(id)
+          const from = (e.relatedTarget as Element | null)?.closest?.('.bar-wrapper')
+          if (wrapper && from === wrapper) return
+          window.clearTimeout(tipTimerRef.current)
+          setTip(null)
+          if (!id || connectModeRef.current) return
+          const { clientX, clientY } = e
+          tipTimerRef.current = window.setTimeout(() => {
+            const g = ganttRef.current as any
+            if (g?.bar_being_dragged != null) return
+            setTip({ id, x: clientX, y: clientY })
+          }, 350)
+        })
+        ganttContainer.addEventListener('mouseleave', () => {
+          setHover(null)
+          window.clearTimeout(tipTimerRef.current)
+          setTip(null)
+        })
+        ganttContainer.addEventListener('scroll', () => {
+          window.clearTimeout(tipTimerRef.current)
+          setTip(t => (t ? null : t))
+        }, { passive: true })
+        ganttContainer.addEventListener('wheel', () => {
+          window.clearTimeout(tipTimerRef.current)
+          setTip(null)
+        }, { passive: true })
         onContainerReadyRef.current(ganttContainer)
       }
 
@@ -443,6 +534,11 @@ export function GanttPanel({
     applyDecorations()
     emitGeometry()
   }, [calendar]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Selection changes restyle in place
+  useEffect(() => {
+    applyDecorations()
+  }, [selectedIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Day / Week / Month: dates computed fresh for the new unit (a refresh
   // would keep the old view's first date, e.g. mid-month in Month view),
@@ -478,7 +574,7 @@ export function GanttPanel({
     : `Click the predecessor task  (Esc to cancel)`
 
   return (
-    <div className={`gantt-panel${connectMode ? ' gantt-panel--connecting' : ''}`}>
+    <div className={`gantt-panel${connectMode ? ' gantt-panel--connecting' : ''}${selectedIds.size ? ' gantt-panel--has-selection' : ''}`}>
       <div className="gantt-panel__topbar">
         {leftHidden && (
           <>
@@ -600,6 +696,12 @@ export function GanttPanel({
         className="gantt-panel__chart"
         style={{ display: tasks.length > 0 ? 'block' : 'none' }}
       />
+      {tip && (() => {
+        const t = allTasks.find(x => x.id === tip.id)
+        return t ? (
+          <BarTooltip task={t} allTasks={allTasks} x={tip.x} y={tip.y} settings={settings} />
+        ) : null
+      })()}
     </div>
   )
 }

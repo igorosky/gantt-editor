@@ -1486,13 +1486,16 @@ export default class Gantt {
             if (!was_active) return;
 
             this.bar_being_dragged = null;
+            // Local addition: whether any bar moved (a press without a move
+            // also ends here)
+            const moved = bars.some((bar) => !!bar.$bar.finaldx);
             bars.forEach((bar) => {
                 const $bar = bar.$bar;
                 if (!$bar.finaldx) return;
                 bar.date_changed();
                 bar.set_action_completed();
             });
-            this.trigger_event('drag_end', []);
+            this.trigger_event('drag_end', [moved]);
         });
     }
 

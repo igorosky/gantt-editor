@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react'
+import type { ClickMods } from '../lib/selection'
+import { setHover } from '../lib/hover'
 import type { RefObject } from 'react'
 import type { Filter, GanttTask } from '../types'
 import { TaskRow } from './TaskRow'
@@ -37,13 +39,17 @@ interface Props {
   settings: Settings
   statusSource?: StatusSource
   onHide: () => void
+  selectedIds: ReadonlySet<string>
+  onSelect: (id: string, mods: ClickMods) => void
+  onClearSelection: () => void
+  renameRequest: { id: string; n: number } | null
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
   onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
   onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
-  statusSource, onHide,
+  statusSource, onHide, selectedIds, onSelect, onClearSelection, renameRequest,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -131,7 +137,14 @@ export function TaskPanel({
         statusSource={statusSource}
       />
 
-      <div className="task-panel__list" ref={listRef}>
+      <div
+        className="task-panel__list"
+        ref={listRef}
+        // A click on the empty space below the rows clears the selection
+        onClick={e => { if (e.target === e.currentTarget) onClearSelection() }}
+        onMouseOver={e => setHover((e.target as Element).closest?.('.task-row')?.getAttribute('data-task-id') ?? null)}
+        onMouseLeave={() => setHover(null)}
+      >
         {rows.length === 0 && (
           <p className="task-panel__empty">
             {filters.length > 0 ? 'No tasks match your filters.'
@@ -165,6 +178,9 @@ export function TaskPanel({
               dropPos={drop?.id === task.id ? drop.pos : null}
               isCritical={criticalIds.has(task.id)}
               settings={settings}
+              selected={selectedIds.has(task.id)}
+              onSelect={mods => onSelect(task.id, mods)}
+              renameSignal={renameRequest?.id === task.id ? renameRequest.n : undefined}
             />
           )
         })}

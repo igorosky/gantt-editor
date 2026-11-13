@@ -3319,3 +3319,189 @@
 @media (prefers-reduced-motion: reduce) {
   .toast { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   Selection, hover cross-highlight, bar tooltip, avatars
+   --------------------------------------------------------------------------- */
+
+.task-row {
+  cursor: default;
+}
+
+.task-row.is-hover {
+  background: #f6f7ff;
+}
+
+.task-row--selected,
+.task-row--selected:hover,
+.task-row--selected.is-hover {
+  background: #eceeff;
+}
+
+/* The accent edge sits inside the row like the critical inset; with both the
+   critical red stays at the very edge */
+.task-row--selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.task-row--selected.task-row--critical {
+  box-shadow: inset 3px 0 0 var(--critical), inset 6px 0 0 var(--accent);
+}
+
+.task-row--selected .task-row__name-text {
+  color: #2b2f7a;
+  font-weight: 500;
+}
+
+.gantt .bar-wrapper.is-hover .bar {
+  filter: brightness(0.96) drop-shadow(0 1px 3px rgba(20, 22, 60, 0.25));
+}
+
+.gantt .bar-wrapper.is-selected .bar {
+  stroke: var(--accent-strong) !important;
+  stroke-width: 2.5 !important;
+  filter: drop-shadow(0 0 5px rgba(92, 103, 232, 0.55));
+}
+
+/* Critical stays red; the glow says selected */
+.gantt .bar-wrapper.is-selected.critical .bar {
+  stroke: var(--critical) !important;
+}
+
+.gantt .arrow path {
+  transition: opacity 0.15s, stroke 0.15s;
+}
+
+.gantt .arrow path.arrow--sel-in,
+.gantt .arrow path.arrow--sel-out {
+  stroke: var(--accent-strong);
+  stroke-width: 2.4;
+}
+
+.gantt-panel--has-selection .gantt .arrow path:not(.arrow--sel-in):not(.arrow--sel-out) {
+  opacity: 0.3;
+}
+
+.gantt-panel__chart svg {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Tooltip on a bar */
+.bar-tip {
+  position: fixed;
+  z-index: 2500;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  color: var(--text-mid);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: tip-in 0.12s ease-out;
+}
+
+.bar-tip__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.bar-tip__ms {
+  color: var(--milestone);
+  margin-right: 5px;
+}
+
+.bar-tip__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.bar-tip__muted {
+  color: var(--text-muted);
+}
+
+.bar-tip__status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.bar-tip__people {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.bar-tip__person {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bar-tip__warn {
+  color: var(--critical);
+  font-weight: 500;
+}
+
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Avatars */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+  user-select: none;
+}
+
+.avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar--more {
+  background: var(--border-strong);
+  color: var(--text-mid);
+}
+
+.avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.avatar-stack > .avatar {
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.avatar-stack > .avatar + .avatar {
+  margin-left: -6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-tip { animation: none; }
+  .gantt .arrow path { transition: none; }
+}

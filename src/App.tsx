@@ -39,6 +39,7 @@ import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
 import { buildTree, descendants, flattenTree } from './lib/tree'
 import { daysBetween, shiftDays } from './lib/dates'
 import { isActivationTarget, isTypingTarget, modKey } from './lib/keys'
+import { EMPTY_SELECTION, click as clickSelection, prune as pruneSelection, type ClickMods, type Selection } from './lib/selection'
 import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
 
@@ -161,6 +162,18 @@ export default function App() {
     [tasks, collapsed, narrowed, filteredTasks],
   )
   const visibleTasks = useMemo(() => rows.map(r => r.task), [rows])
+  const rowOrder = useMemo(() => visibleTasks.map(t => t.id), [visibleTasks])
+  // Selected tasks (both panels); ids of deleted tasks drop out
+  const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION)
+  useEffect(() => {
+    setSelection(s => pruneSelection(s, id => tree.byId.has(id)))
+  }, [tree])
+  const selectTask = useCallback((id: string, mods: ClickMods = {}) => {
+    setSelection(s => clickSelection(s, rowOrder, id, mods))
+  }, [rowOrder])
+  const clearSelection = useCallback(() => setSelection(s => (s.ids.size ? EMPTY_SELECTION : s)), [])
+  // F2 / menu Rename: the row with this id starts editing its name
+  const [renameRequest, setRenameRequest] = useState<{ id: string; n: number } | null>(null)
   const [criticalOn, setCriticalOn] = useState(() => loadCritical().on)
   const [criticalScope, setCriticalScope] = useState<CriticalScope>(() => loadCritical().scope)
   const critical = useMemo(
@@ -367,6 +380,7 @@ export default function App() {
   const leaveBoard = useCallback(() => {
     setDetailTaskId(null)
     setNewTaskDraft(null)
+    setSelection(EMPTY_SELECTION)
   }, [])
 
   const switchBoard = useCallback((id: string) => {
@@ -541,6 +555,20 @@ export default function App() {
     if (list && ganttContainer) list.scrollTop = ganttContainer.scrollTop
   }, [leftHidden, ganttContainer])
 
+  // Rename in the row; with the task list hidden, in the details popup
+  const startRename = useCallback((id: string) => {
+    if (leftHidden) {
+      setDetailTaskId(id)
+      return
+    }
+    setRenameRequest(r => ({ id, n: (r?.n ?? 0) + 1 }))
+  }, [leftHidden])
+
+  const openDetail = useCallback((id: string) => {
+    setSelection(s => (s.ids.size === 1 && s.ids.has(id) ? s : { ids: new Set([id]), anchor: id }))
+    setDetailTaskId(id)
+  }, [])
+
   // Undo / redo are off while a pull / push runs or waits for a dialog: its
   // results are about to be applied to the board as it is
   const historyBlocked = !!syncBusy || !!pendingSync
@@ -561,8 +589,10 @@ export default function App() {
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyRef.current = (e: KeyboardEvent) => {
     if (route.view !== 'board' || dialogOpen || e.defaultPrevented) return
+    // The event's own target too: Enter in the rename field may already have
+    // removed the field (and its focus) by the time the event gets here
     const el = document.activeElement
-    if (isTypingTarget(el)) return
+    if (isTypingTarget(el) || isTypingTarget(e.target as Element)) return
     const key = e.key.toLowerCase()
     if (modKey(e) && !e.altKey && key === 'z' && !e.shiftKey) {
       e.preventDefault()
@@ -573,6 +603,21 @@ export default function App() {
     } else if (!modKey(e) && !e.altKey && e.key === '\\' && !isActivationTarget(el)) {
       e.preventDefault()
       setLeftHidden(!leftHidden)
+    } else if (e.key === 'Escape' && !modKey(e)) {
+      if (selection.ids.size) {
+        e.preventDefault()
+        clearSelection()
+      }
+    } else if (e.key === 'Enter' && !modKey(e) && !e.shiftKey && !isActivationTarget(el)) {
+      if (selection.ids.size === 1) {
+        e.preventDefault()
+        openDetail([...selection.ids][0])
+      }
+    } else if (e.key === 'F2' && !modKey(e)) {
+      if (selection.ids.size === 1) {
+        e.preventDefault()
+        startRename([...selection.ids][0])
+      }
     }
   }
   useEffect(() => {
@@ -743,8 +788,12 @@ export default function App() {
             onAddSubtask={handleAddSubtask}
             onToggleCollapsed={toggleCollapsed}
             onSetAllCollapsed={setAllCollapsed}
-            onOpenDetail={(id) => setDetailTaskId(id)}
+            onOpenDetail={openDetail}
             listRef={taskListRef}
+            selectedIds={selection.ids}
+            onSelect={selectTask}
+            onClearSelection={clearSelection}
+            renameRequest={renameRequest}
             criticalIds={critical.taskIds}
             settings={settings}
             statusSource={statusSource}
@@ -780,6 +829,11 @@ export default function App() {
             }}
             leftHidden={leftHidden}
             onShowLeft={() => setLeftHidden(false)}
+            selectedIds={selection.ids}
+            onSelect={selectTask}
+            onClearSelection={clearSelection}
+            onOpenDetail={openDetail}
+            settings={settings}
             onAddTask={handleAddTask}
             filterInfo={filters.length ? {
               shown: filteredTasks.length,

@@ -113,13 +113,15 @@ test('critical arrows keep their mark after a view change and a scroll extension
   await expect(arrow).toHaveClass(/arrow--critical/)
   await zoom(page, 'Day')
   await expect(arrow).toHaveClass(/arrow--critical/)
-  // Scroll left past the middle with the wheel: frappe extends the chart and re-renders
+  // Near the left edge frappe's 'mousewheel' handler extends the chart and
+  // re-renders it (Playwright's synthetic wheel sends no legacy mousewheel
+  // event, so it is dispatched directly)
   const gantt = page.locator('.gantt-container')
-  await gantt.evaluate(el => { el.scrollLeft = 10 })
-  const before = await page.locator('.gantt .grid-header .lower-text, .gantt-container .lower-text').count()
-  const box = (await gantt.boundingBox())!
-  await page.mouse.move(box.x + 200, box.y + 200)
-  await page.mouse.wheel(-200, 0)
-  await expect.poll(() => page.locator('.gantt .grid-header .lower-text, .gantt-container .lower-text').count()).toBeGreaterThan(before)
+  const before = await page.locator('.gantt-container .lower-text').count()
+  await gantt.evaluate(el => {
+    el.scrollLeft = 10
+    el.dispatchEvent(new WheelEvent('mousewheel', { bubbles: true, deltaX: -100 }))
+  })
+  await expect.poll(() => page.locator('.gantt-container .lower-text').count()).toBeGreaterThan(before)
   await expect(arrow).toHaveClass(/arrow--critical/)
 })
