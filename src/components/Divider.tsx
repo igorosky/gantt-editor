@@ -2,9 +2,10 @@ import { useCallback } from 'react'
 
 interface Props {
   onResize: (deltaX: number) => void
+  onCollapse?: () => void // a knob on the divider hides the left panel
 }
 
-export function Divider({ onResize }: Props) {
+export function Divider({ onResize, onCollapse }: Props) {
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -31,6 +32,19 @@ export function Divider({ onResize }: Props) {
       className="divider"
       onMouseDown={handleMouseDown}
       aria-label="Resize panels"
-    />
+    >
+      {onCollapse && (
+        <button
+          type="button"
+          className="divider__collapse"
+          onMouseDown={e => e.stopPropagation()}
+          onClick={onCollapse}
+          aria-label="Hide the task list"
+          title="Hide the task list (\)"
+        >
+          ‹
+        </button>
+      )}
+    </div>
   )
 }

@@ -34,7 +34,6 @@ interface Props {
   criticalIds: Set<string>
   settings: Settings
   statusSource?: StatusSource
-  onHide: () => void
   selectedIds: ReadonlySet<string>
   onSelect: (id: string, mods: ClickMods) => void
   onClearSelection: () => void
@@ -49,7 +48,7 @@ export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
   onAdd, onClear, onSort, onUpdate, onMove, onIndent, onOutdent,
   onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
-  statusSource, onHide, selectedIds, onSelect, onClearSelection, renameRequest,
+  statusSource, selectedIds, onSelect, onClearSelection, renameRequest,
   onOpenMenu, menuTaskIds, pathIds, lateStarts,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
@@ -95,15 +94,6 @@ export function TaskPanel({
   return (
     <div className="task-panel">
       <div className="task-panel__header" style={{ height: GANTT_HEADER_HEIGHT }}>
-        <button
-          type="button"
-          className="task-panel__hide-btn"
-          onClick={onHide}
-          aria-label="Hide the task list"
-          title="Hide the task list (\)"
-        >
-          ‹
-        </button>
         <h2 className="task-panel__title">Tasks</h2>
         <div className="task-panel__header-actions">
           {hasParents && (

@@ -3060,30 +3060,42 @@
   flex-shrink: 0;
 }
 
-.task-panel__header {
-  gap: 6px;
+.divider {
+  position: relative;
 }
 
-.task-panel__title {
-  margin-right: auto;
-}
-
-.task-panel__hide-btn {
-  width: 24px;
-  height: 24px;
-  margin-left: -8px;
+/* Knob on the divider: hides the task list (it takes no header space) */
+.divider__collapse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 5;
+  width: 16px;
+  height: 36px;
+  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 14px;
   line-height: 1;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.task-panel__hide-btn:hover {
-  background: var(--accent-soft);
+.divider:hover .divider__collapse,
+.divider__collapse:focus-visible {
+  opacity: 1;
+}
+
+.divider__collapse:hover {
   color: var(--accent);
+  border-color: var(--accent);
 }
 
 .gantt-panel__tool-btn {

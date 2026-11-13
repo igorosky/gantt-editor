@@ -1176,10 +1176,9 @@ export default function App() {
             criticalIds={critical.taskIds}
             settings={settings}
             statusSource={statusSource}
-            onHide={() => setLeftHidden(true)}
           />
         </div>
-        {!leftHidden && <Divider onResize={handleResize} />}
+        {!leftHidden && <Divider onResize={handleResize} onCollapse={() => setLeftHidden(true)} />}
         <div className="app__panel app__panel--right" style={{ width: leftHidden ? '100%' : `${100 - leftPct}%` }}>
           <GanttPanel
             tasks={visibleTasks}
