@@ -128,7 +128,7 @@ test('hover highlights the row and bar together and shows a tooltip', async ({ p
   await expect(row(page, 'Beta')).toHaveClass(/is-hover/)
   const tip = page.getByRole('tooltip')
   await expect(tip).toContainText('Beta')
-  await expect(tip).toContainText('9 Mar – 13 Mar')
+  await expect(tip).toContainText('9 Mar - 13 Mar')
   await expect(tip).toContainText('5 days')
   await expect(tip).toContainText('1 predecessor')
   await expect(tip).toContainText('1 successor')

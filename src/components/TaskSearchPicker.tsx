@@ -111,7 +111,7 @@ export function TaskSearchPicker({ tasks, refused, onPick, onClose, placeholder,
           const isActive = t.id === activeId
           const dates = isMilestone(t)
             ? (t.end ? fmtShort(t.end) : '')
-            : t.start && t.end ? `${fmtShort(t.start)} – ${fmtShort(t.end)}` : ''
+            : t.start && t.end ? `${fmtShort(t.start)} - ${fmtShort(t.end)}` : ''
           return (
             <button
               key={t.id}

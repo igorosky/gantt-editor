@@ -14,10 +14,26 @@ const TASKS: SeedTask[] = [
 
 const loadedImg = async (l: Locator) => l.evaluateAll(els => els.filter(e => (e as HTMLImageElement).naturalWidth > 0).length)
 
-test('rows, bars, tooltip and popup show profile pictures, initials otherwise', async ({ page, seed }) => {
+// A list wide enough for names, dates and faces (the default 30% of 1440 px
+// is 430 px, where the row stack is left out on purpose)
+const WIDE = { 'gantt-layout': { leftPct: 45, leftHidden: false } }
+
+test('the row avatar stack shows only when the task list has room', async ({ page, seed }) => {
   await seed({ tasks: TASKS, linked: true })
+  await expect(row(page, 'Alpha').locator('.task-row__people')).toBeHidden()
+  const divider = (await page.locator('.divider').boundingBox())!
+  await page.mouse.move(divider.x + 2, divider.y + 120)
+  await page.mouse.down()
+  await page.mouse.move(divider.x + 200, divider.y + 120, { steps: 6 })
+  await page.mouse.up()
+  await expect(row(page, 'Alpha').locator('.task-row__people')).toBeVisible()
+})
+
+test('rows, bars, tooltip and popup show profile pictures, initials otherwise', async ({ page, seed }) => {
+  await seed({ tasks: TASKS, linked: true, storage: WIDE })
   const stack = row(page, 'Alpha').locator('.task-row__people .avatar')
   await expect(stack).toHaveCount(3)
+  await expect(stack.first()).toBeVisible()
   await expect.poll(() => loadedImg(row(page, 'Alpha').locator('.task-row__people img'))).toBe(1)
   await expect(stack.nth(1)).toHaveText('BJ') // broken picture -> initials
   await expect(stack.nth(2)).toHaveText('CW') // no picture
@@ -53,7 +69,7 @@ async function setPictures(page: Page, labels: string[], on: boolean) {
 }
 
 test('settings switch the new places off one by one', async ({ page, seed }) => {
-  await seed({ tasks: TASKS, linked: true })
+  await seed({ tasks: TASKS, linked: true, storage: WIDE })
   await expect(bar(page, 'A').locator('.bar-avatar')).toHaveCount(3)
   await setPictures(page, ['In the task list', 'Next to gantt bars', 'In the bar tooltip'], false)
   await expect(row(page, 'Alpha').locator('.task-row__people')).toHaveCount(0)
@@ -81,7 +97,7 @@ test('the portfolio People tab shows pictures unless turned off', async ({ page,
 })
 
 test('a local board without ClickUp shows initials', async ({ page, seed }) => {
-  await seed({ tasks: TASKS })
+  await seed({ tasks: TASKS, storage: WIDE })
   await expect(row(page, 'Alpha').locator('.task-row__people .avatar').first()).toHaveText('AS')
   await expect(row(page, 'Alpha').locator('.task-row__people img')).toHaveCount(0)
   await expect(bar(page, 'A').locator('.bar-avatar image')).toHaveCount(0)

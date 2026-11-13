@@ -678,7 +678,7 @@ export function TaskDetailPopup({
             {/* Dependencies: predecessors and successors */}
             <div className="tdp-label">Depends on</div>
             <div className="tdp-value tdp-deps-wrap">
-              {deps.length === 0 && <span className="tdp-empty">—</span>}
+              {deps.length === 0 && <span className="tdp-empty">-</span>}
               {deps.map(d => (
                 <span key={d.id} className="tdp-dep-chip">
                   {onOpenTask && !isCreateMode
@@ -709,7 +709,7 @@ export function TaskDetailPopup({
 
             <div className="tdp-label">Blocks</div>
             <div className="tdp-value tdp-deps-wrap">
-              {successors.length === 0 && <span className="tdp-empty">—</span>}
+              {successors.length === 0 && <span className="tdp-empty">-</span>}
               {successors.map(d => (
                 <span key={d.id} className="tdp-dep-chip">
                   {onOpenTask && !isCreateMode

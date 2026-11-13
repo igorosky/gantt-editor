@@ -74,7 +74,7 @@ export function QuickFind({ tasks, stateOf, onPick, onClose }: Props) {
             const path = ancestors(t.id, tree).reverse().map(id => tree.byId.get(id)?.name ?? '').join(' › ')
             const dates = isMilestone(t)
               ? (t.end ? fmtShort(t.end) : '')
-              : t.start && t.end ? `${fmtShort(t.start)} – ${fmtShort(t.end)}` : 'no dates'
+              : t.start && t.end ? `${fmtShort(t.start)} - ${fmtShort(t.end)}` : 'no dates'
             return (
               <button
                 key={t.id}

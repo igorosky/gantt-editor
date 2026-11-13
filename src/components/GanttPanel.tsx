@@ -211,6 +211,17 @@ export function GanttPanel({
     onGeometryRef.current?.({ dates: dates.slice(), columnWidth })
   }
 
+  // Unmount (Portfolio view, board teardown): drop the chart with its
+  // document listener
+  useEffect(() => () => {
+    const g = ganttRef.current as any
+    if (!g) return
+    const c = g.$container as HTMLElement | null
+    g.destroy()
+    c?.remove()
+    ganttRef.current = null
+  }, [])
+
   // The chart height is fixed at init; keep it matching the panel when the
   // window or the layout around it (e.g. the workload strip) changes size.
   useEffect(() => {
@@ -458,6 +469,8 @@ export function GanttPanel({
       const panelHeight = containerRef.current.clientHeight
 
       appliedCalendarRef.current = calendarKey(calendarRef.current)
+      // Built in the current zoom (it may have changed while there was no chart)
+      appliedViewRef.current = viewMode
       ganttRef.current = new FrappeGantt(containerRef.current, frappeTasks, {
         ...calendarOptions(calendarRef.current),
         view_mode: viewMode,
@@ -756,7 +769,7 @@ export function GanttPanel({
           className={`gantt-panel__load-btn${loadStripOn ? ' gantt-panel__load-btn--active' : ''}`}
           onClick={onToggleLoadStrip}
           aria-pressed={loadStripOn}
-          title="Show how many tasks (or estimated hours) run in each week of this board"
+          title="Show how many tasks (or estimated hours) run in each day, week or month of this board (follows the zoom)"
         >
           ▤ Workload
         </button>

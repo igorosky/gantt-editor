@@ -68,7 +68,7 @@ export function AssigneePicker({ members, loading, error, assigned, partial, onT
             <span className="tdp-picker-name">{m.username}</span>
             {assignedIds.has(m.id)
               ? <span className="tdp-picker-check">✓</span>
-              : partial?.has(m.id) && <span className="tdp-picker-check tdp-picker-check--partial" title="Some of the tasks">–</span>}
+              : partial?.has(m.id) && <span className="tdp-picker-check tdp-picker-check--partial" title="Some of the tasks">-</span>}
           </button>
         ))}
       </div>

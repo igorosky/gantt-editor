@@ -55,7 +55,7 @@ export function BarTooltip({ task, allTasks, x, y, settings }: Props) {
           ? <span>{task.end ? fmtShort(task.end) : 'No date'}</span>
           : (
             <span>
-              {task.start ? fmtShort(task.start) : '?'} – {task.end ? fmtShort(task.end) : '?'}
+              {task.start ? fmtShort(task.start) : '?'} - {task.end ? fmtShort(task.end) : '?'}
               {days > 0 && <span className="bar-tip__muted"> · {plural(days, 'day')}</span>}
             </span>
           )}

@@ -966,7 +966,7 @@ export default function App() {
     } else if (modKey(e) && !e.altKey && key === 'y') {
       e.preventDefault()
       doRedo()
-    } else if (!modKey(e) && !e.altKey && e.key === '\\' && !isActivationTarget(el)) {
+    } else if (!modKey(e) && !e.altKey && e.key === '\\') {
       e.preventDefault()
       setLeftHidden(!leftHidden)
     } else if (e.key === 'Escape' && !modKey(e)) {
