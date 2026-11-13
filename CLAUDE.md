@@ -103,7 +103,7 @@ Local fork changes:
 - `calendar: { weekStart, workdays }` (`Date.getDay()` numbers; Monday, Mon-Fri; at least one workday). `dates.ts`: `startOfWeek(d, weekStart)`, `unitStarts` / `unitBoundaries(..., weekStart)`, `isWorkday(d, workdays)`, all defaulting to the old Monday / Mon-Fri. Used by the live gantt (fork `week_start` + `is_weekend`; `GanttPanel` re-renders in place on change via `change_view_mode(_, true)`, not `update_options`, which would reset `container_height`), the export, the portfolio week buckets, hours spread and capacity. `workdayLabel` replaces the old hard-coded "Mon-Fri" texts.
 - `backlog: { statuses, include: { board, warnings, health, workload } }`: a task is backlog when its trimmed status equals a listed name, case-insensitive (default `backlog`; may be empty). `withoutBacklog(tasks, settings, area)` returns the input unchanged when backlog is included there. `board`: rows + gantt bars (through the `include` set above); `warnings`: row warnings and portfolio quality; `health`: RAG, KPIs, risk list, roadmap RAG outline; `workload`: Workload / People tabs and the board strip. Pull / push always see every task.
 - `rules: { dueSoonDays, redOverdueShare, amberUnscheduledShare }` (7, 0.2, 0.25), clamped by `normalizeSettings`.
-- `board: { statusColors }` (default **on**, the one default that changes the look from before settings): see Status colors. Dialog section "Board".
+- `board: { statusColors, dependencyWarnings, avatars: { rows, bars, tooltip, portfolio } }` (all default **on**, the defaults that change the look from before settings): see Status colors, Board interaction. Dialog section "Board" (its draft keeps the whole `board` object, so saving never resets a field the dialog does not show).
 - `milestones: MilestoneStyle = { as: 'type' | 'tag', tag }` (`'type'`, `milestone`; a blank tag takes the default): how ClickUp stores a milestone, see Milestones. `sameTag` compares tag names case-insensitively.
 
 ## Status colors
@@ -159,6 +159,17 @@ Two memoized walks: `chainTo` (longest chain ending at a node, over predecessors
 **Styling is red outline, fill preserved**, so ClickUp status colors survive. Live chart: `GanttPanel` appends a `critical` token to `custom_class` (hence the `Bar.refresh()` fork fix above) and `App.css` strokes `.bar-wrapper.critical .bar` with `!important`, since gantt.css pins `stroke-width: 0`. Arrows carry no class, so `applyCriticalArrows()` re-marks `path[data-from][data-to]` after every init/refresh — arrows are rebuilt each refresh. Left panel gets `.task-row--critical` (inset box-shadow, so row height stays 48px). Color lives in `--critical` (`App.css`) and `C.critical` (`exportGantt.ts`), which must stay in sync.
 
 Export: `ExportOptions.criticalIds` / `.criticalEdges` are precomputed by `ExportDialog` over the **whole** selection and passed down — never computed inside `buildGanttSvg`, which receives row slices per page and would otherwise produce a different path on every page.
+
+## Board interaction
+
+Pure modules (all tested) behind selection, menus, paths, pickers and undo:
+
+- `src/lib/selection.ts`: `Selection = { ids, anchor }`; `click(sel, order, id, { shift, toggle })` (plain = only it, Ctrl/Cmd = toggle, Shift = range from the anchor in display order, Ctrl+Shift adds the range), `step` (arrow keys, Shift extends), `prune`, `inOrder`.
+- `src/lib/depGraph.ts`: `depIndex(tasks)` (preds / succs maps, memoized per array identity, ignores missing ids and self links), `allPredecessors` / `allSuccessors`, `dependencyPath(tasks, roots, 'both' | 'up' | 'down') -> { ids, edges }` (an edge counts only when it leads into a root or its upstream, or out of a root or its downstream: a bypass edge around the root is not on the path), `dependencyRefusal` (self / duplicate / loop) and the picker-wide `refusedPredecessors` / `refusedSuccessors` (one walk), `violates` / `dependencyViolations` / `violatedPredecessors` (whole local days: task -> task late when the successor starts on or before the due day; a milestone is a point, so same day is fine on either side; dateless never late), `snapAfterPredecessors` (days to move so it starts after its latest predecessor).
+- `src/lib/fuzzy.ts`: hand-rolled scorer, every query word a subsequence (any word order), accents / Polish letters folded, bonuses for word starts (camelCase too), runs, early and contiguous hits; `fuzzyFilter`, `highlightRuns` (UTF-16 positions, emoji safe).
+- `src/lib/history.ts`: generic undo / redo stacks; `record(h, prev, label, key?)` coalesces actions sharing the newest entry's `key` (one drag gesture), cap 100.
+- `src/lib/taskMenu.ts`: `buildTaskMenu(ctx)` -> descriptors with action ids (the board maps ids to handlers): one task = open, rename, add predecessor / successor, highlight path (both / up / down, select path), start after predecessors (late and warnings on), status (linked list), priority, assign (ClickUp), hierarchy moves with reasons, delete; several = paths, status, priority, assign, shift dates, link as chain, unlink, clear, delete N.
+- `src/lib/statuses.ts`: `defaultStatus` (lowest orderindex = what ClickUp gives a new task), `statusPatch` (name + color + type together), `sameStatus`.
 
 ## Export to PNG / PDF
 

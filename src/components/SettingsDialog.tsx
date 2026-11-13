@@ -37,7 +37,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
   const [amber, setAmber] = useState(pct(settings.rules.amberUnscheduledShare))
   const [msAs, setMsAs] = useState(settings.milestones.as)
   const [msTag, setMsTag] = useState(settings.milestones.tag)
-  const [statusColors, setStatusColors] = useState(settings.board.statusColors)
+  const [board, setBoard] = useState(settings.board)
 
   const keywordList = cleanNames(keywords.split(','))
   const isBacklogName = (name: string) => statuses.some(s => s.toLowerCase() === name.toLowerCase())
@@ -97,7 +97,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
     setAmber(pct(d.rules.amberUnscheduledShare))
     setMsAs(d.milestones.as)
     setMsTag(d.milestones.tag)
-    setStatusColors(d.board.statusColors)
+    setBoard(d.board)
   }
 
   function save() {
@@ -113,7 +113,7 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
       },
       // A blank tag falls back to the default
       milestones: { as: msAs, tag: msTag },
-      board: { statusColors },
+      board,
     }))
   }
 
@@ -144,8 +144,8 @@ export function SettingsDialog({ settings, knownStatuses, knownTags, onSave, onC
           <label className="settings__check">
             <input
               type="checkbox"
-              checked={statusColors}
-              onChange={e => setStatusColors(e.target.checked)}
+              checked={board.statusColors}
+              onChange={e => setBoard(b => ({ ...b, statusColors: e.target.checked }))}
             />
             Color tasks by status
           </label>
