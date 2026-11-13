@@ -26,6 +26,17 @@ docker run --rm -v /home/igor/gantt-editor2:/work node:20-alpine sh -c "cd /work
 
 App served at **http://localhost:3000**.
 
+## End-to-end tests
+
+`e2e/` is a separate Playwright package (its own `package.json` + lockfile; the app's dependencies are untouched). Specs are `e2e/tests/*.e2e.ts` (not `*.spec.ts`, so vitest never picks them up) and run against the built container:
+
+```bash
+docker compose up --build -d
+docker run --rm --network host -v /home/igor/gantt-editor2/e2e:/e2e -w /e2e mcr.microsoft.com/playwright:v1.48.2-jammy sh -c "npm ci && npx playwright test"
+```
+
+`e2e/tests/fixtures.ts`: `seed({ tasks, linked?, storage? })` writes a board into a fresh context's localStorage once per tab (reloads keep what the app saved), fixes the clock at `NOW` (Wed 4 March 2026, Europe/Warsaw) and waits until frappe's smooth scroll to today settles. `clickup` mocks `/clickup/**` (`/team` with `profilePicture`s, list statuses, list tasks; `mock.on(handler)` adds more); **any unmocked ClickUp request is aborted and fails the spec**, so no test can reach real ClickUp. ClickUp avatar URLs are served by a route (the `broken` one 404s). Page errors and console errors fail the spec. Helpers: `bar`, `row`, `rowDates`, `savedTasks`, `dragBy`, `clickBar` (the label covers the bar's middle), `center`. Week view = 20 px per day. `regression.e2e.ts` pins behaviour from before the interactive-board work.
+
 ## Architecture
 
 React 18 + TypeScript + Vite frontend, static files via nginx, multi-stage Docker build.
