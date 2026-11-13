@@ -211,6 +211,7 @@ export default function App() {
   // Opens the details popup with a dependency picker open
   const [detailPicker, setDetailPicker] = useState<'pred' | 'succ' | null>(null)
   const [findOpen, setFindOpen] = useState(false)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   // A task to bring into view (and flash) once the rows show it
   const revealRef = useRef<{ id: string; flash: boolean; tries: number } | null>(null)
@@ -827,6 +828,7 @@ export default function App() {
   // Rename in the row; with the task list hidden, in the details popup
   const startRename = useCallback((id: string) => {
     if (leftHidden) {
+      setDetailPicker(null)
       setDetailTaskId(id)
       return
     }
@@ -923,7 +925,7 @@ export default function App() {
   // Shortcuts on the board, unless a dialog is open or a field has focus
   const dialogOpen = settingsOpen || appSettingsOpen || exportOpen || !!detailTaskId || !!newTaskDraft
     || !!pendingSync || syncLogOpen || pendingOpen || linkOpen || !!menu || !!shiftFor || !!assignFor
-    || findOpen || helpOpen
+    || findOpen || helpOpen || switcherOpen
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyRef.current = (e: KeyboardEvent) => {
     if (route.view !== 'board' || dialogOpen || e.defaultPrevented) return
@@ -1050,6 +1052,7 @@ export default function App() {
             onRemove={removeBoard}
             onLink={() => setLinkOpen(true)}
             onConnect={() => setSettingsOpen(true)}
+            onOpenChange={setSwitcherOpen}
           />
         )}
         <div className="app__header-spacer" />
@@ -1375,7 +1378,7 @@ export default function App() {
           runs={syncLog.runs}
           onClose={() => setSyncLogOpen(false)}
           onClear={syncLog.clear}
-          onOpenTask={id => { setSyncLogOpen(false); setDetailTaskId(id) }}
+          onOpenTask={id => { setSyncLogOpen(false); setDetailPicker(null); setDetailTaskId(id) }}
           taskIds={new Set(tasks.map(t => t.id))}
         />
       )}
@@ -1392,7 +1395,7 @@ export default function App() {
           <TaskDetailPopup
             task={t}
             allTasks={tasks}
-            onClose={() => setDetailTaskId(null)}
+            onClose={() => { setDetailTaskId(null); setDetailPicker(null) }}
             onUpdate={patch => handleTaskUpdate(detailTaskId, patch)}
             onSetParent={parentId => setTaskParent(detailTaskId, parentId)}
             onOpenTask={id => openDetail(id)}

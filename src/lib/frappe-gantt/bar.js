@@ -555,7 +555,10 @@ export default class Bar {
 
     set_action_completed() {
         this.action_completed = true;
-        setTimeout(() => (this.action_completed = false), 1000);
+        // Local change: 350 ms (was 1 s), long enough to swallow the click
+        // and double-click of the drop itself, short enough that a click on
+        // the just-dropped bar is not ignored
+        setTimeout(() => (this.action_completed = false), 350);
     }
 
     compute_start_end_date() {

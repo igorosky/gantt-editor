@@ -32,6 +32,10 @@ function calendarOptions(c: Calendar) {
 
 const calendarKey = (c: Calendar) => `${c.weekStart}:${c.workdays.join(',')}`
 
+// Drag gestures, numbered across mounts: the undo history (in App) outlives
+// this panel (Portfolio and back), and equal keys would merge two drags
+let gestureCount = 0
+
 export type ViewMode = 'Day' | 'Week' | 'Month'
 const VIEW_MODES: ViewMode[] = ['Day', 'Week', 'Month']
 const VIEW_KEY = 'gantt-view'
@@ -182,7 +186,7 @@ export function GanttPanel({
   // Calendar the live chart was built or last re-rendered with
   const appliedCalendarRef = useRef('')
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
-  // Bumped on every mousedown on a bar: the date changes of one gesture share
+  // Set on every mousedown on a bar: the date changes of one gesture share
   // an undo step
   const gestureRef = useRef(0)
   // A refresh skipped during a drag; the drop re-runs the effect through dropCount
@@ -387,7 +391,7 @@ export function GanttPanel({
     if (tasks.length === 0) {
       if (ganttRef.current) {
         const oldContainer = (ganttRef.current as any).$container as HTMLElement | null
-        ganttRef.current.clear()
+        ;(ganttRef.current as any).destroy()
         ganttRef.current = null
         oldContainer?.remove()
       }
@@ -532,7 +536,7 @@ export function GanttPanel({
         ganttContainer.addEventListener('mousedown', e => {
           window.clearTimeout(tipTimerRef.current)
           setTip(null)
-          if ((e.target as Element).closest?.('.bar-wrapper')) gestureRef.current++
+          if ((e.target as Element).closest?.('.bar-wrapper')) gestureRef.current = ++gestureCount
         }, true)
         // A click on the empty chart clears the selection (not the click
         // that ends a drag, nor any click in connect mode)

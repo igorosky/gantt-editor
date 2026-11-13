@@ -1558,7 +1558,8 @@ export default class Gantt {
         // stayed set, and the host skipped its refreshes until the next
         // mouseup inside). drag_end tells the host the drag is over: the
         // dates went out frame by frame, so the drop itself changes nothing.
-        document.addEventListener('mouseup', () => {
+        // Kept so destroy() can remove it
+        this._on_document_mouseup = () => {
             const was_active = action_in_progress();
             is_dragging = false;
             is_resizing_left = false;
@@ -1580,7 +1581,8 @@ export default class Gantt {
                 bar.set_action_completed();
             });
             this.trigger_event('drag_end', [moved]);
-        });
+        };
+        document.addEventListener('mouseup', this._on_document_mouseup);
     }
 
     // Fixed BFS: adds successors to 'out' only after computing next 'to_process',
@@ -1727,6 +1729,14 @@ export default class Gantt {
             .reduce((prev_date, cur_date) =>
                 cur_date <= prev_date ? cur_date : prev_date,
             );
+    }
+
+    // Local addition: clear() plus the document listener a host would leak
+    // when it drops this instance (render() calls clear(), so clear() itself
+    // keeps it)
+    destroy() {
+        document.removeEventListener('mouseup', this._on_document_mouseup);
+        this.clear();
     }
 
     clear() {
