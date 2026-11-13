@@ -1372,6 +1372,15 @@ export default class Gantt {
                     parent_bar_id,
                     ...this.get_all_dependent_tasks(parent_bar_id),
                 ];
+                // Local addition: the host may drag more bars along (the rest
+                // of a multi-selection), each with its own dependents
+                const extra = this.options.get_drag_group
+                    ? this.options.get_drag_group(parent_bar_id) || []
+                    : [];
+                for (const id of extra) {
+                    ids.push(id, ...this.get_all_dependent_tasks(id));
+                }
+                ids = [...new Set(ids)];
             } else {
                 ids = [parent_bar_id];
             }

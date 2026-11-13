@@ -158,6 +158,8 @@ export function GanttPanel({
   const onOpenDetailRef = useRef(onOpenDetail)
   const onOpenMenuRef = useRef(onOpenMenu)
   const onLinkRef = useRef(onLink)
+  const selectedIdsRef = useRef(selectedIds)
+  selectedIdsRef.current = selectedIds
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
@@ -459,8 +461,19 @@ export function GanttPanel({
         popup: false,
         // The toolbar has its own Today button
         today_button: false,
-        // Fork: a dot after each bar to drag links from
-        ...{ connect_handles: true },
+        // Fork: a dot after each bar to drag links from; grabbing a bar of a
+        // multi-selection drags the whole selection (each with its own
+        // successors and subtasks, as for one bar)
+        ...{
+          connect_handles: true,
+          get_drag_group: (id: string) => {
+            const sel = selectedIdsRef.current
+            if (sel.size < 2 || !sel.has(id) || connectModeRef.current) return []
+            const g = ganttRef.current as any
+            // Only real bars: a dateless task is a hidden placeholder bar
+            return [...sel].filter(x => x !== id && g?.get_bar?.(x) && !g.get_bar(x).task._placeholder)
+          },
+        },
         on_date_change: (task, start, end) => {
           if (!task.id) return
           const allTasks = allTasksRef.current
