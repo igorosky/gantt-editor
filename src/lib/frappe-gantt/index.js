@@ -434,6 +434,70 @@ export default class Gantt {
         this.trigger_event('render', []);
     }
 
+    // Local addition: drag from a bar's connector dot onto another bar. A
+    // dashed line follows the pointer, the bar under it is marked; the drop
+    // fires connect(from, to), Escape or a drop elsewhere connect(from, null).
+    // bar_being_dragged is set meanwhile, so the host holds its refreshes.
+    start_connect(e, element) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = element.closest('.bar-wrapper');
+        const from = wrapper && wrapper.getAttribute('data-id');
+        const from_bar = from && this.get_bar(from);
+        if (!from_bar) return;
+        this.bar_being_dragged = false;
+        this.$svg.classList.add('connecting');
+        const line = createSVG('path', {
+            class: 'connect-line',
+            append_to: this.layers.arrow,
+        });
+        const sx = from_bar.$bar.getEndX();
+        const sy = from_bar.$bar.getY() + from_bar.$bar.getHeight() / 2;
+        const to_svg = (cx, cy) => {
+            const pt = this.$svg.createSVGPoint();
+            pt.x = cx;
+            pt.y = cy;
+            return pt.matrixTransform(this.$svg.getScreenCTM().inverse());
+        };
+        let target = null;
+        const move = (ev) => {
+            const p = to_svg(ev.clientX, ev.clientY);
+            line.setAttribute('d', `M ${sx} ${sy} L ${p.x} ${p.y}`);
+            const hit = document
+                .elementFromPoint(ev.clientX, ev.clientY)
+                ?.closest?.('.bar-wrapper');
+            const id = hit && hit.getAttribute('data-id');
+            const next = id && id !== from ? hit : null;
+            if (next !== target) {
+                if (target) target.classList.remove('connect-target');
+                target = next;
+                if (target) target.classList.add('connect-target');
+            }
+        };
+        const finish = (ok) => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+            document.removeEventListener('keydown', key, true);
+            line.remove();
+            if (target) target.classList.remove('connect-target');
+            this.$svg.classList.remove('connecting');
+            this.bar_being_dragged = null;
+            const to = ok && target ? target.getAttribute('data-id') : null;
+            this.trigger_event('connect', [from, to]);
+        };
+        const up = () => finish(true);
+        const key = (ev) => {
+            if (ev.key !== 'Escape') return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            finish(false);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+        document.addEventListener('keydown', key, true);
+        move(e);
+    }
+
     // Local addition: the date at x. Day-based units are exact; months
     // invert date_utils.diff's month model (whole months + day / 31), so a
     // drop in Month view lands on the day the bar shows instead of a whole
@@ -1269,6 +1333,11 @@ export default class Gantt {
                 this.bar_being_dragged = true;
         });
 
+        $.on(this.$svg, 'mousedown', '.connect-handle', (e, element) => {
+            if (e.button !== 0) return;
+            this.start_connect(e, element);
+        });
+
         $.on(this.$svg, 'mousedown', '.grid-column', (e) => {
             this.trigger_event('date_click', [this.getDateFromClick(e)]);
         });
@@ -1278,6 +1347,8 @@ export default class Gantt {
             // drag too, so moving the pointer with a context menu open
             // dragged the bar.
             if (e.button !== 0) return;
+            // The connector dot starts a link, not a drag (start_connect)
+            if (e.target.closest && e.target.closest('.connect-handle')) return;
             const bar_wrapper = $.closest('.bar-wrapper', element);
             if (element.classList.contains('left')) {
                 is_resizing_left = true;

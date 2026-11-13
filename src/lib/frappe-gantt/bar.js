@@ -1,8 +1,9 @@
 import date_utils from './date_utils';
 import { $, createSVG, animateSVG } from './svg_utils';
 
-// Local addition: avatars next to bars
+// Local addition: avatars next to bars, and the connector dot
 const AVATAR_SIZE = 18;
+const CONNECT_GAP = 7;
 let avatar_seq = 0;
 
 export default class Bar {
@@ -91,6 +92,7 @@ export default class Bar {
         if (this.task._span) this.draw_span();
         this.draw_label();
         this.draw_resize_handles();
+        this.draw_connect_handle();
 
         if (this.task.thumbnail) {
             this.draw_thumbnail();
@@ -151,11 +153,33 @@ export default class Bar {
         this.update_avatars_position();
     }
 
-    // After the bar, or after the label when it is drawn outside the bar
+    // Local addition: a dot right of the bar; dragging from it onto another
+    // bar links the two (index.js start_connect). Option connect_handles.
+    draw_connect_handle() {
+        this.$connect = null;
+        if (this.invalid || this.gantt.options.readonly || !this.gantt.options.connect_handles) return;
+        this.$connect = createSVG('circle', {
+            r: 5,
+            class: 'connect-handle',
+            append_to: this.handle_group,
+        });
+        const title = createSVG('title', { append_to: this.$connect });
+        title.textContent = 'Drag onto another task to link them';
+        this.update_connect_position();
+    }
+
+    update_connect_position() {
+        if (!this.$connect) return;
+        this.$connect.setAttribute('cx', this.$bar.getEndX() + CONNECT_GAP);
+        this.$connect.setAttribute('cy', this.$bar.getY() + this.$bar.getHeight() / 2);
+    }
+
+    // After the bar (and its connector dot), or after the label when it is
+    // drawn outside the bar
     update_avatars_position() {
         if (!this.$avatars) return;
         const label = this.group.querySelector('.bar-label');
-        let x = this.$bar.getEndX() + 6;
+        let x = this.$bar.getEndX() + (this.$connect ? CONNECT_GAP + 10 : 6);
         if (label && label.classList.contains('big')) {
             const box = label.getBBox();
             x = box.x + box.width + 8;
@@ -467,6 +491,7 @@ export default class Bar {
 
         this.update_label_position();
         this.update_handle_position();
+        this.update_connect_position();
         this.compute_duration();
         this.date_changed();
         this.update_arrow_position();
@@ -641,7 +666,8 @@ export default class Bar {
             label = this.group.querySelector('.bar-label'),
             img = this.group.querySelector('.bar-img');
 
-        let padding = 5;
+        // Local change: an outside label starts after the connector dot
+        let padding = this.$connect ? CONNECT_GAP + 9 : 5;
         let x_offset_label_img = this.image_size + 10;
         const labelWidth = label.getBBox().width;
         const barWidth = bar.getWidth();

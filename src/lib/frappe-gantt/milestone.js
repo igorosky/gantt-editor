@@ -73,7 +73,8 @@ export default class Milestone extends Bar {
         // 'big' also stops update_label_position_on_horizontal_scroll from
         // sliding the label into the diamond.
         label.classList.add('big');
-        label.setAttribute('x', this.$bar.getEndX() + 10);
+        // Past the connector dot when there is one
+        label.setAttribute('x', this.$bar.getEndX() + (this.$connect ? 18 : 10));
         this.update_avatars_position();
     }
 

@@ -21,6 +21,10 @@ import { ContextMenu } from './components/ContextMenu'
 import { ShiftDatesDialog } from './components/ShiftDatesDialog'
 import { AssigneePicker } from './components/AssigneePicker'
 import { PeopleContext, type Person } from './components/Avatar'
+import { QuickFind, type FindState } from './components/QuickFind'
+import { ShortcutHelp } from './components/ShortcutHelp'
+import { flashTask } from './lib/hover'
+import { GANTT_HEADER_HEIGHT, GANTT_ROW_HEIGHT } from './constants'
 import { usePeople } from './hooks/usePeople'
 import { useListStatuses } from './hooks/useListStatuses'
 import { buildTaskMenu } from './lib/taskMenu'
@@ -48,11 +52,12 @@ import { runFailed, runSummary } from './lib/syncLog'
 import { boardPatchFromRemote, boardSummary } from './lib/boards'
 import type { ProjectRef } from './lib/portfolioData'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
-import { buildTree, descendants, dragClosure, flattenTree } from './lib/tree'
+import { ancestors, buildTree, descendants, dragClosure, flattenTree } from './lib/tree'
 import { daysBetween, shiftDays } from './lib/dates'
 import { isActivationTarget, isTypingTarget, modKey } from './lib/keys'
 import {
-  EMPTY_SELECTION, click as clickSelection, inOrder, prune as pruneSelection, type ClickMods, type Selection,
+  EMPTY_SELECTION, click as clickSelection, inOrder, lastInOrder, prune as pruneSelection, step as stepSelection,
+  type ClickMods, type Selection,
 } from './lib/selection'
 import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
@@ -205,6 +210,11 @@ export default function App() {
   const [assignFor, setAssignFor] = useState<{ ids: string[]; x: number; y: number } | null>(null)
   // Opens the details popup with a dependency picker open
   const [detailPicker, setDetailPicker] = useState<'pred' | 'succ' | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  // A task to bring into view (and flash) once the rows show it
+  const revealRef = useRef<{ id: string; flash: boolean; tries: number } | null>(null)
+  const [revealTick, setRevealTick] = useState(0)
   const [criticalOn, setCriticalOn] = useState(() => loadCritical().on)
   const [criticalScope, setCriticalScope] = useState<CriticalScope>(() => loadCritical().scope)
   const critical = useMemo(
@@ -522,13 +532,23 @@ export default function App() {
     setNewTaskDraft({ id: crypto.randomUUID(), name: 'New subtask', start, end, progress: 0, parentId, ...draftStatus })
   }, [tasks, draftStatus])
 
-  // The new task and the links of its successors land in one undo step
+  // Selects a task and scrolls both panels to it once it is on screen; with
+  // `flash` it lights up briefly
+  const bringIntoView = useCallback((id: string, flash: boolean) => {
+    setSelection({ ids: new Set([id]), anchor: id })
+    revealRef.current = { id, flash, tries: 0 }
+    setRevealTick(n => n + 1)
+  }, [])
+
+  // The new task and the links of its successors land in one undo step;
+  // the new task is then selected, scrolled to and flashed
   const handleCommitDraft = useCallback((successors: string[] = []) => {
     if (!newTaskDraft) return
     commitTask(newTaskDraft, successors)
     if (newTaskDraft.parentId) expand(newTaskDraft.parentId)
     setNewTaskDraft(null)
-  }, [newTaskDraft, commitTask, expand])
+    bringIntoView(newTaskDraft.id, true)
+  }, [newTaskDraft, commitTask, expand, bringIntoView])
 
   // `succ` depends on `pred`, or no longer does; a link that would close a
   // loop is refused with a note
@@ -734,6 +754,76 @@ export default function App() {
     if (list && ganttContainer) list.scrollTop = ganttContainer.scrollTop
   }, [leftHidden, ganttContainer])
 
+  // Scrolls the list (the chart follows) and the chart so the row and bar
+  // of `id` are in view
+  const revealTask = useCallback((id: string) => {
+    const i = rowOrder.indexOf(id)
+    if (i < 0) return
+    const list = taskListRef.current
+    const gc = ganttContainer
+    const top = i * GANTT_ROW_HEIGHT
+    const scroller = list && !leftHidden ? list : gc
+    if (scroller) {
+      const viewH = scroller === gc ? scroller.clientHeight - GANTT_HEADER_HEIGHT : scroller.clientHeight
+      const st = scroller.scrollTop
+      if (top < st) scroller.scrollTop = top
+      else if (top + GANTT_ROW_HEIGHT > st + viewH) scroller.scrollTop = top + GANTT_ROW_HEIGHT - viewH
+    }
+    const b = gc?.querySelector<SVGGraphicsElement>(`.bar-wrapper[data-id="${CSS.escape(id)}"] .bar`)
+    if (gc && b && getComputedStyle(b).visibility !== 'hidden') {
+      const x = Number(b.getAttribute('x'))
+      const w = Number(b.getAttribute('width'))
+      if (x < gc.scrollLeft || x + w > gc.scrollLeft + gc.clientWidth) gc.scrollLeft = Math.max(0, x - gc.clientWidth / 3)
+    }
+  }, [rowOrder, ganttContainer, leftHidden])
+
+  useEffect(() => {
+    const r = revealRef.current
+    if (!r) return
+    if (!rowOrder.includes(r.id)) {
+      // Not on screen yet (filters / collapse being undone): wait one more round
+      if (++r.tries > 2) revealRef.current = null
+      return
+    }
+    revealRef.current = null
+    revealTask(r.id)
+    if (r.flash) flashTask(r.id)
+  }, [rowOrder, revealTick, revealTask])
+
+  // Why a task is not on screen (quick find)
+  const boardIds = useMemo(() => new Set(boardTasks.map(t => t.id)), [boardTasks])
+  const matchIds = useMemo(() => new Set(filteredTasks.map(t => t.id)), [filteredTasks])
+  const rowIdSet = useMemo(() => new Set(rowOrder), [rowOrder])
+  const findState = useCallback((id: string): FindState => {
+    if (!boardIds.has(id)) return 'backlog'
+    if (rowIdSet.has(id)) return 'shown'
+    if (filters.length && !matchIds.has(id)) return 'filtered'
+    return 'collapsed'
+  }, [boardIds, rowIdSet, filters.length, matchIds])
+
+  // Quick find: clears the filters / opens the collapsed parents a task
+  // needs, then selects, scrolls to and flashes it. A backlog task the board
+  // hides (Settings) opens in the details popup instead.
+  const jumpTo = useCallback((id: string) => {
+    setFindOpen(false)
+    const state = findState(id)
+    if (state === 'backlog') {
+      setSelection(EMPTY_SELECTION)
+      setDetailPicker(null)
+      setDetailTaskId(id)
+      return
+    }
+    if (state === 'filtered') setFilters([])
+    const up = ancestors(id, tree)
+    setCollapsed(prev => {
+      if (!up.some(a => prev.has(a))) return prev
+      const next = new Set(prev)
+      for (const a of up) next.delete(a)
+      return next
+    })
+    bringIntoView(id, true)
+  }, [findState, tree, bringIntoView])
+
   // Rename in the row; with the task list hidden, in the details popup
   const startRename = useCallback((id: string) => {
     if (leftHidden) {
@@ -833,6 +923,7 @@ export default function App() {
   // Shortcuts on the board, unless a dialog is open or a field has focus
   const dialogOpen = settingsOpen || appSettingsOpen || exportOpen || !!detailTaskId || !!newTaskDraft
     || !!pendingSync || syncLogOpen || pendingOpen || linkOpen || !!menu || !!shiftFor || !!assignFor
+    || findOpen || helpOpen
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyRef.current = (e: KeyboardEvent) => {
     if (route.view !== 'board' || dialogOpen || e.defaultPrevented) return
@@ -841,7 +932,33 @@ export default function App() {
     const el = document.activeElement
     if (isTypingTarget(el) || isTypingTarget(e.target as Element)) return
     const key = e.key.toLowerCase()
-    if (modKey(e) && !e.altKey && key === 'z' && !e.shiftKey) {
+    const one = selection.ids.size === 1 ? [...selection.ids][0] : null
+    if ((modKey(e) && !e.altKey && key === 'k') || (e.key === '/' && !modKey(e))) {
+      e.preventDefault()
+      setFindOpen(true)
+    } else if (e.key === '?' && !modKey(e)) {
+      e.preventDefault()
+      setHelpOpen(true)
+    } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !modKey(e) && !e.altKey) {
+      if (!rowOrder.length) return
+      e.preventDefault()
+      const next = stepSelection(selection, rowOrder, e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
+      setSelection(next)
+      const focus = e.shiftKey ? lastInOrder(next, rowOrder) : [...next.ids][0]
+      if (focus) revealTask(focus)
+    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && one && !modKey(e) && !e.altKey && !e.shiftKey) {
+      e.preventDefault()
+      const kids = tree.children.get(one) ?? []
+      if (e.key === 'ArrowRight') {
+        if (kids.length && collapsed.has(one)) toggleCollapsed(one)
+        else if (kids.length && rowIdSet.has(kids[0].id)) bringIntoView(kids[0].id, false)
+      } else if (kids.length && !collapsed.has(one) && rowIdSet.has(kids[0].id)) {
+        toggleCollapsed(one)
+      } else {
+        const parent = tree.parent.get(one)
+        if (parent && rowIdSet.has(parent)) bringIntoView(parent, false)
+      }
+    } else if (modKey(e) && !e.altKey && key === 'z' && !e.shiftKey) {
       e.preventDefault()
       doUndo()
     } else if (modKey(e) && !e.altKey && key === 'y') {
@@ -1098,6 +1215,9 @@ export default function App() {
             settings={settings}
             onOpenMenu={(id, x, y) => openMenu(id, x, y)}
             violatedEdges={violations ?? undefined}
+            onLink={(from, to) => setLink(from, to, true)}
+            onFind={() => setFindOpen(true)}
+            onShortcuts={() => setHelpOpen(true)}
             path={path && pathFocus ? {
               ids: path.ids,
               edges: path.edges,
@@ -1129,6 +1249,10 @@ export default function App() {
       )}
       </>)}
       <Toasts toasts={toast.toasts} onDismiss={toast.dismiss} />
+      {findOpen && route.view === 'board' && (
+        <QuickFind tasks={tasks} stateOf={findState} onPick={jumpTo} onClose={() => setFindOpen(false)} />
+      )}
+      {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
       {menu && (
         <ContextMenu
           x={menu.x}

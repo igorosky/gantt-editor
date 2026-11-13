@@ -100,6 +100,9 @@ interface Props {
   onOpenMenu: (id: string, x: number, y: number) => void
   path?: { ids: ReadonlySet<string>; edges: ReadonlySet<string>; info: PathInfo }
   violatedEdges?: ReadonlySet<string> // links whose successor starts too early
+  onLink: (from: string, to: string) => void // dragged from a bar's connector dot
+  onFind: () => void
+  onShortcuts: () => void
 }
 
 export function GanttPanel({
@@ -134,6 +137,9 @@ export function GanttPanel({
   onOpenMenu,
   path,
   violatedEdges,
+  onLink,
+  onFind,
+  onShortcuts,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -151,6 +157,7 @@ export function GanttPanel({
   const onClearSelectionRef = useRef(onClearSelection)
   const onOpenDetailRef = useRef(onOpenDetail)
   const onOpenMenuRef = useRef(onOpenMenu)
+  const onLinkRef = useRef(onLink)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
@@ -162,6 +169,7 @@ export function GanttPanel({
     onClearSelectionRef.current = onClearSelection
     onOpenDetailRef.current = onOpenDetail
     onOpenMenuRef.current = onOpenMenu
+    onLinkRef.current = onLink
   })
   // When the last drag ended: the click that follows a drop is not a click
   // on the empty chart
@@ -451,6 +459,8 @@ export function GanttPanel({
         popup: false,
         // The toolbar has its own Today button
         today_button: false,
+        // Fork: a dot after each bar to drag links from
+        ...{ connect_handles: true },
         on_date_change: (task, start, end) => {
           if (!task.id) return
           const allTasks = allTasksRef.current
@@ -490,6 +500,12 @@ export function GanttPanel({
             if (refreshPendingRef.current) bumpDropCount()
           },
           on_render: () => decorateRef.current(),
+          // Fork: the connector dot was dropped (to = null: nowhere / Escape)
+          on_connect: (from: string, to: string | null) => {
+            lastDragEndRef.current = performance.now()
+            if (refreshPendingRef.current) bumpDropCount()
+            if (to && !connectModeRef.current) onLinkRef.current(from, to)
+          },
           on_double_click: (task: FrappeGanttNS.Task) => {
             if (!connectModeRef.current && task.id) onOpenDetailRef.current(task.id)
           },
@@ -679,6 +695,9 @@ export function GanttPanel({
           </span>
         )}
         <div className="gantt-panel__topbar-spacer" />
+        <button type="button" className="gantt-panel__tool-btn" onClick={onFind} title="Find a task (Ctrl+K)">
+          ⌕ Find
+        </button>
         <button type="button" className="gantt-panel__tool-btn" onClick={scrollToToday} title="Scroll to today">
           Today
         </button>
@@ -731,6 +750,15 @@ export function GanttPanel({
           title="Highlight the longest chain of dependent tasks"
         >
           ◆ Critical path
+        </button>
+        <button
+          type="button"
+          className="gantt-panel__icon-btn"
+          onClick={onShortcuts}
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts (?)"
+        >
+          ?
         </button>
       </div>
 
