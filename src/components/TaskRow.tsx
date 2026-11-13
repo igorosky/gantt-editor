@@ -22,15 +22,15 @@ interface Props {
   row: TreeRow
   showToggles: boolean // some task has subtasks: reserve the toggle column
   onUpdate: (patch: Partial<GanttTask>) => void
-  onRemove: () => void
   onOpenDetail: () => void
   onToggleCollapsed: () => void
-  onAddSubtask: () => void
-  // Absent when the move is not possible from here
+  // Tab / Shift+Tab while renaming; absent when the move is not possible
   onIndent?: () => void
   onOutdent?: () => void
-  onMakeTopLevel?: () => void
-  topLevelBlocked?: string // why this subtask cannot become a top-level task
+  // The task menu (shared with the bar's right-click) at a point
+  onOpenMenu: (x: number, y: number, align: 'left' | 'right') => void
+  menuOpen: boolean
+  dimmed: boolean // outside a highlighted path
   onDragStart: () => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: () => void
@@ -43,97 +43,9 @@ interface Props {
   renameSignal?: number // a new value starts renaming (F2, menu Rename)
 }
 
-interface MenuItem {
-  label: string
-  hint?: string
-  onClick?: () => void
-  title?: string
-  danger?: boolean
-}
-
-// Fixed-position menu, so the scrolling task list never clips it
-function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
-  const [pos, setPos] = useState<{ x: number; y: number; up: boolean } | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!pos) return
-    const onDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node) && !btnRef.current?.contains(e.target as Node)) setPos(null)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null) }
-    // The menu is fixed, so it would drift off its row when the list scrolls
-    const onScroll = () => setPos(null)
-    const list = btnRef.current?.closest('.task-panel__list')
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    list?.addEventListener('scroll', onScroll)
-    window.addEventListener('resize', onScroll)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-      list?.removeEventListener('scroll', onScroll)
-      window.removeEventListener('resize', onScroll)
-    }
-  }, [pos])
-
-  function toggle() {
-    if (pos) { setPos(null); return }
-    const r = btnRef.current!.getBoundingClientRect()
-    const up = r.bottom + 220 > window.innerHeight
-    setPos({ x: r.right, y: up ? r.top - 4 : r.bottom + 4, up })
-  }
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        className={`task-row__menu-btn${pos ? ' task-row__menu-btn--open' : ''}`}
-        onClick={toggle}
-        aria-label={label}
-        aria-haspopup="menu"
-        aria-expanded={!!pos}
-        title="More actions"
-        type="button"
-      >
-        ⋯
-      </button>
-      {pos && (
-        <div
-          ref={menuRef}
-          className="row-menu"
-          role="menu"
-          style={{ left: pos.x, top: pos.y, transform: `translate(-100%, ${pos.up ? '-100%' : '0'})` }}
-        >
-          {items.map(it => (
-            <button
-              key={it.label}
-              type="button"
-              role="menuitem"
-              className={`row-menu__item${it.danger ? ' row-menu__item--danger' : ''}${it.onClick ? '' : ' row-menu__item--disabled'}`}
-              // aria-disabled rather than disabled, so the title explaining why still shows
-              aria-disabled={!it.onClick}
-              title={it.title}
-              onClick={() => {
-                if (!it.onClick) return
-                setPos(null)
-                it.onClick()
-              }}
-            >
-              <span>{it.label}</span>
-              {it.hint && <span className="row-menu__hint">{it.hint}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </>
-  )
-}
-
 export function TaskRow({
-  row, showToggles, onUpdate, onRemove, onOpenDetail, onToggleCollapsed, onAddSubtask,
-  onIndent, onOutdent, onMakeTopLevel, topLevelBlocked,
+  row, showToggles, onUpdate, onOpenDetail, onToggleCollapsed,
+  onIndent, onOutdent, onOpenMenu, menuOpen, dimmed,
   onDragStart, onDragOver, onDrop, onDragEnd, dropPos, isCritical, settings,
   selected, onSelect, renameSignal,
 }: Props) {
@@ -167,25 +79,12 @@ export function TaskRow({
   const lateNote = late ? ` - overdue by ${late} day${late === 1 ? '' : 's'}` : ''
   const look = settings.board.statusColors ? statusBarStyle(task.statusColor) : null
 
-  const menu: MenuItem[] = [
-    { label: 'Add subtask', onClick: onAddSubtask },
-    { label: 'Make subtask of task above', hint: 'Tab', onClick: onIndent },
-    {
-      label: 'Move up a level', hint: 'Shift+Tab', onClick: onOutdent,
-      title: !onOutdent && depth === 1 ? topLevelBlocked : undefined,
-    },
-    ...(depth >= 2
-      ? [{ label: 'Make top-level task', onClick: onMakeTopLevel, title: onMakeTopLevel ? undefined : topLevelBlocked }]
-      : []),
-    { label: childCount ? 'Delete with subtasks' : 'Delete', onClick: onRemove, danger: true },
-  ]
-
   const dropIndent = INDENT_ORIGIN + (dropPos === 'inside-first' ? depth + 1 : depth) * INDENT
   const style = { height: GANTT_ROW_HEIGHT, '--drop-indent': `${dropIndent}px` } as CSSProperties
 
   return (
     <div
-      className={`task-row${dropPos ? ` task-row--drop-${dropPos}` : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}${late ? ' task-row--overdue' : ''}${childCount ? ' task-row--parent' : ''}${context ? ' task-row--context' : ''}${selected ? ' task-row--selected' : ''}`}
+      className={`task-row${dropPos ? ` task-row--drop-${dropPos}` : ''}${ms ? ' task-row--milestone' : ''}${isCritical ? ' task-row--critical' : ''}${late ? ' task-row--overdue' : ''}${childCount ? ' task-row--parent' : ''}${context ? ' task-row--context' : ''}${selected ? ' task-row--selected' : ''}${dimmed ? ' task-row--dimmed' : ''}`}
       style={style}
       data-task-id={task.id}
       aria-selected={selected}
@@ -197,6 +96,12 @@ export function TaskRow({
         // Controls in the row do their own thing
         if ((e.target as Element).closest('button, input, textarea, select, a, .task-row__dates')) return
         onSelect({ shift: e.shiftKey, toggle: modKey(e) })
+      }}
+      onContextMenu={e => {
+        // Text fields keep the browser's menu (copy / paste)
+        if ((e.target as Element).closest('input, textarea')) return
+        e.preventDefault()
+        onOpenMenu(e.clientX, e.clientY, 'left')
       }}
       title={context ? 'Shown because a subtask matches the filters' : undefined}
       draggable={!editing}
@@ -317,7 +222,20 @@ export function TaskRow({
         )}
       </div>
 
-      <RowMenu label={`More actions for ${task.name}`} items={menu} />
+      <button
+        className={`task-row__menu-btn${menuOpen ? ' task-row__menu-btn--open' : ''}`}
+        onClick={e => {
+          const r = e.currentTarget.getBoundingClientRect()
+          onOpenMenu(r.right, r.bottom + 4, 'right')
+        }}
+        aria-label={`More actions for ${task.name}`}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        title="More actions"
+        type="button"
+      >
+        ⋯
+      </button>
       <button
         className="task-row__detail-btn"
         onClick={onOpenDetail}

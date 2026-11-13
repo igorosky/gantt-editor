@@ -52,7 +52,8 @@ export interface TeamMember {
   id: number
   username: string | null
   email: string
-  profilePicture?: string
+  profilePicture?: string | null
+  color?: string | null // ClickUp's avatar color, when the response carries one
 }
 
 export interface CreateTaskBody {

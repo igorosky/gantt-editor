@@ -312,9 +312,11 @@ export default class Bar {
                         task: this.task,
                         target: this.$bar,
                     });
+                // Local fix: the bar may be gone (deleted from the keyboard
+                // while hovered) by the time the timer fires
                 this.gantt.$container
                     .querySelector(`.highlight-${task_id}`)
-                    .classList.remove('hide');
+                    ?.classList.remove('hide');
             }, 200);
         });
         $.on(this.group, 'mouseleave', () => {
@@ -323,7 +325,7 @@ export default class Bar {
                 this.gantt.popup?.hide?.();
             this.gantt.$container
                 .querySelector(`.highlight-${task_id}`)
-                .classList.add('hide');
+                ?.classList.add('hide');
         });
 
         // Local changes: a drop is not a click (action_completed is set by

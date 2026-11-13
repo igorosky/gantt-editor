@@ -51,6 +51,12 @@ export interface HistoryControls {
   onRedo: () => void
 }
 
+export interface PathInfo {
+  label: string // whose path
+  count: number // tasks on it
+  onClear: () => void
+}
+
 export interface FilterInfo {
   shown: number
   total: number
@@ -90,6 +96,8 @@ interface Props {
   onClearSelection: () => void
   onOpenDetail: (id: string) => void
   settings: Settings
+  onOpenMenu: (id: string, x: number, y: number) => void
+  path?: { ids: ReadonlySet<string>; edges: ReadonlySet<string>; info: PathInfo }
 }
 
 export function GanttPanel({
@@ -121,6 +129,8 @@ export function GanttPanel({
   onClearSelection,
   onOpenDetail,
   settings,
+  onOpenMenu,
+  path,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const ganttRef = useRef<InstanceType<typeof FrappeGantt> | null>(null)
@@ -135,6 +145,7 @@ export function GanttPanel({
   const onSelectRef = useRef(onSelect)
   const onClearSelectionRef = useRef(onClearSelection)
   const onOpenDetailRef = useRef(onOpenDetail)
+  const onOpenMenuRef = useRef(onOpenMenu)
   useEffect(() => {
     onDateChangeRef.current = onDateChange
     onContainerReadyRef.current = onContainerReady
@@ -145,6 +156,7 @@ export function GanttPanel({
     onSelectRef.current = onSelect
     onClearSelectionRef.current = onClearSelection
     onOpenDetailRef.current = onOpenDetail
+    onOpenMenuRef.current = onOpenMenu
   })
   // When the last drag ended: the click that follows a drop is not a click
   // on the empty chart
@@ -245,18 +257,24 @@ export function GanttPanel({
     const root = containerRef.current
     if (!root) return
     root.querySelectorAll<SVGGElement>('.bar-wrapper[data-id]').forEach(el => {
-      el.classList.toggle('is-selected', selectedIds.has(el.getAttribute('data-id')!))
+      const id = el.getAttribute('data-id')!
+      el.classList.toggle('is-selected', selectedIds.has(id))
+      el.classList.toggle('is-dimmed', !!path && !path.ids.has(id))
     })
     root.querySelectorAll<SVGPathElement>('path[data-from][data-to]').forEach(p => {
       const from = p.getAttribute('data-from')!
       const to = p.getAttribute('data-to')!
-      p.classList.toggle('arrow--critical', criticalEdges.has(edgeKey(from, to)))
+      const key = edgeKey(from, to)
+      p.classList.toggle('arrow--critical', criticalEdges.has(key))
       const out = selectedIds.has(from)
       const into = selectedIds.has(to)
+      const onPath = !!path?.edges.has(key)
       p.classList.toggle('arrow--sel-out', out)
       p.classList.toggle('arrow--sel-in', into)
+      p.classList.toggle('arrow--path', onPath)
+      p.classList.toggle('arrow--dimmed', !!path && !onPath)
       // Drawn last, so the highlighted arrows sit on top of the others
-      if ((out || into) && p.parentNode && p !== p.parentNode.lastChild) p.parentNode.appendChild(p)
+      if ((out || into || onPath) && p.parentNode && p !== p.parentNode.lastChild) p.parentNode.appendChild(p)
     })
     reapplyHover()
   }
@@ -480,6 +498,15 @@ export function GanttPanel({
           if (performance.now() - lastDragEndRef.current < 300) return
           onClearSelectionRef.current()
         })
+        // Right-click on a bar: the task menu (shared with the task list)
+        ganttContainer.addEventListener('contextmenu', e => {
+          const id = (e.target as Element).closest?.('.bar-wrapper')?.getAttribute('data-id')
+          if (!id || connectModeRef.current) return
+          e.preventDefault()
+          window.clearTimeout(tipTimerRef.current)
+          setTip(null)
+          onOpenMenuRef.current(id, e.clientX, e.clientY)
+        })
         // Hover: row cross-highlight at once, the tooltip after a pause
         ganttContainer.addEventListener('mouseover', e => {
           const wrapper = (e.target as Element).closest?.('.bar-wrapper')
@@ -535,10 +562,10 @@ export function GanttPanel({
     emitGeometry()
   }, [calendar]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Selection changes restyle in place
+  // Selection and path changes restyle in place
   useEffect(() => {
     applyDecorations()
-  }, [selectedIds]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, path]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Day / Week / Month: dates computed fresh for the new unit (a refresh
   // would keep the old view's first date, e.g. mid-month in Month view),
@@ -574,7 +601,7 @@ export function GanttPanel({
     : `Click the predecessor task  (Esc to cancel)`
 
   return (
-    <div className={`gantt-panel${connectMode ? ' gantt-panel--connecting' : ''}${selectedIds.size ? ' gantt-panel--has-selection' : ''}`}>
+    <div className={`gantt-panel${connectMode ? ' gantt-panel--connecting' : ''}${selectedIds.size ? ' gantt-panel--has-selection' : ''}${path ? ' gantt-panel--path' : ''}`}>
       <div className="gantt-panel__topbar">
         {leftHidden && (
           <>
@@ -629,6 +656,12 @@ export function GanttPanel({
         </button>
         {connectMode && (
           <span className="gantt-panel__connect-hint">{connectLabel}</span>
+        )}
+        {path && (
+          <span className="gantt-panel__path-chip" title="Tasks off this path are dimmed (Esc clears)">
+            Path of {path.info.label} · {path.info.count} task{path.info.count === 1 ? '' : 's'}
+            <button type="button" aria-label="Clear path highlight" title="Clear (Esc)" onClick={path.info.onClear}>×</button>
+          </span>
         )}
         <div className="gantt-panel__topbar-spacer" />
         <button type="button" className="gantt-panel__tool-btn" onClick={scrollToToday} title="Scroll to today">

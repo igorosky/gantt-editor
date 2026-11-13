@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Assignee, GanttTask, Tag, TaskType } from '../types'
-import { getListStatuses, getSpaceTags, listTeamMembers, type ClickUpStatus, type TeamMember } from '../lib/clickup'
+import { getSpaceTags, type ClickUpStatus } from '../lib/clickup'
+import { fetchListStatuses } from '../hooks/useListStatuses'
+import type { People } from '../hooks/usePeople'
+import { Avatar, type Person } from './Avatar'
 import { isMilestone, typeChangePatch } from '../utils'
 import { buildTree, canBecomeTopLevel, subtreeSpan, TOP_LEVEL_BLOCKED } from '../lib/tree'
 import { isDone } from '../lib/portfolio'
@@ -30,6 +33,8 @@ interface Props {
   // The ClickUp tag that marks a milestone, when milestones are stored that
   // way: picking it sets the type instead of adding a tag
   milestoneTag?: string
+  people?: People // workspace members (ClickUp connected)
+  initialPicker?: 'pred' | 'succ' | null // open with this dependency picker
 }
 
 // Keep in sync with --milestone in App.css and --g-milestone-color in the gantt theme
@@ -42,22 +47,6 @@ const PRIORITIES: Record<number, { label: string; color: string }> = {
   4: { label: 'Low', color: '#94a3b8' },
 }
 
-
-function getInitials(name: string): string {
-  return name
-    .split(/[\s._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(w => w[0].toUpperCase())
-    .join('')
-}
-
-function avatarColor(name: string): string {
-  const colors = ['#7c85f5', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff
-  return colors[Math.abs(h) % colors.length]
-}
 
 function PriorityPill({ value, onChange }: { value: GanttTask['priority']; onChange: (v: GanttTask['priority']) => void }) {
   const [open, setOpen] = useState(false)
@@ -192,7 +181,7 @@ function StatusSelector({
   useEffect(() => {
     if (!canEdit || statuses.length > 0 || loading) return
     setLoading(true)
-    getListStatuses(token!, listId!)
+    fetchListStatuses(token!, listId!)
       .then(s => { setStatuses(s); setError(null) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
@@ -267,14 +256,11 @@ const fmtSpan = (s?: Date, e?: Date): string =>
 
 export function TaskDetailPopup({
   task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, isCreateMode,
-  clickupToken, clickupTeamId, clickupListId, clickupSpaceId, milestoneTag,
+  clickupToken, clickupListId, clickupSpaceId, milestoneTag, people,
 }: Props) {
   const [nameDraft, setNameDraft] = useState(task.name)
   const [descDraft, setDescDraft] = useState(task.description ?? '')
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [members, setMembers] = useState<TeamMember[]>([])
-  const [membersLoading, setMembersLoading] = useState(false)
-  const [fetchError, setFetchError] = useState<string | null>(null)
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
   const [spaceTags, setSpaceTags] = useState<Tag[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
@@ -350,28 +336,19 @@ export function TaskDetailPopup({
     onUpdate({ dependencies: (task.dependencies ?? []).filter(d => d !== depId) })
   }
 
-  const openPicker = async () => {
+  const openPicker = () => {
     setPickerOpen(true)
-    if (members.length === 0 && !membersLoading && !fetchError && clickupToken && clickupTeamId) {
-      setMembersLoading(true)
-      try {
-        setMembers(await listTeamMembers(clickupToken, clickupTeamId))
-        setFetchError(null)
-      } catch (e) {
-        setFetchError(String(e))
-      } finally {
-        setMembersLoading(false)
-      }
-    }
+    // A failed or never-made load tries again
+    if (people && !people.list.length && !people.loading) people.reload()
   }
 
-  const toggleAssignee = (m: TeamMember) => {
+  const toggleAssignee = (m: Person) => {
     const cur = task.assignees ?? []
     const exists = cur.some(a => a.id === m.id)
     onUpdate({
       assignees: exists
         ? cur.filter(a => a.id !== m.id)
-        : [...cur, { id: m.id, username: m.username ?? m.email }],
+        : [...cur, { id: m.id, username: m.username }],
     })
   }
 
@@ -536,9 +513,7 @@ export function TaskDetailPopup({
             <div className="tdp-value tdp-assignees-wrap">
               {(task.assignees ?? []).map(a => (
                 <span key={a.id !== -1 ? a.id : a.username} className="tdp-assignee-chip">
-                  <span className="tdp-av" style={{ background: avatarColor(a.username) }}>
-                    {getInitials(a.username)}
-                  </span>
+                  <Avatar person={a} size={20} title="" />
                   {a.username}
                   <span
                     className="tdp-assignee-x"
@@ -560,9 +535,9 @@ export function TaskDetailPopup({
               )}
               {pickerOpen && (
                 <AssigneePicker
-                  members={members}
-                  loading={membersLoading}
-                  error={fetchError}
+                  members={people?.list ?? []}
+                  loading={!!people?.loading}
+                  error={people?.error ?? null}
                   assigned={task.assignees ?? []}
                   onToggle={toggleAssignee}
                   onClose={() => setPickerOpen(false)}

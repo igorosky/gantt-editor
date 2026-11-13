@@ -6,8 +6,9 @@ const TASKS: SeedTask[] = [
   { id: 'C', name: 'Gamma', start: '2026-03-16', end: '2026-03-20' },
 ]
 const DAY = 20
-const undoBtn = (page: import('@playwright/test').Page) => page.getByRole('button', { name: 'Undo', exact: true })
-const redoBtn = (page: import('@playwright/test').Page) => page.getByRole('button', { name: 'Redo', exact: true })
+const history = (page: import('@playwright/test').Page) => page.getByRole('group', { name: 'Undo and redo' })
+const undoBtn = (page: import('@playwright/test').Page) => history(page).getByRole('button', { name: 'Undo', exact: true })
+const redoBtn = (page: import('@playwright/test').Page) => history(page).getByRole('button', { name: 'Redo', exact: true })
 
 test('a drag is one undo step, successors included; Ctrl+Y redoes it', async ({ page, seed }) => {
   await seed({ tasks: TASKS })

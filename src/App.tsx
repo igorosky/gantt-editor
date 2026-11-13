@@ -17,6 +17,16 @@ import { SyncDeleteDialog } from './components/SyncDeleteDialog'
 import { PendingDeletionsDialog } from './components/PendingDeletionsDialog'
 import { WorkloadStrip } from './components/WorkloadStrip'
 import { Toasts, useToasts } from './components/Toasts'
+import { ContextMenu } from './components/ContextMenu'
+import { ShiftDatesDialog } from './components/ShiftDatesDialog'
+import { AssigneePicker } from './components/AssigneePicker'
+import { PeopleContext, type Person } from './components/Avatar'
+import { usePeople } from './hooks/usePeople'
+import { useListStatuses } from './hooks/useListStatuses'
+import { buildTaskMenu } from './lib/taskMenu'
+import { dependencyPath, dependencyRefusal, snapAfterPredecessors, type PathDirection } from './lib/depGraph'
+import { statusPatch } from './lib/statuses'
+import { taskLabel } from './lib/taskPatch'
 import { PortfolioView } from './components/portfolio/PortfolioView'
 import type { GanttGeometry } from './components/GanttPanel'
 import { useHashRoute } from './hooks/useHashRoute'
@@ -36,10 +46,12 @@ import { runFailed, runSummary } from './lib/syncLog'
 import { boardPatchFromRemote, boardSummary } from './lib/boards'
 import type { ProjectRef } from './lib/portfolioData'
 import { EMPTY_CRITICAL, computeCriticalPath } from './lib/criticalPath'
-import { buildTree, descendants, flattenTree } from './lib/tree'
+import { buildTree, descendants, dragClosure, flattenTree } from './lib/tree'
 import { daysBetween, shiftDays } from './lib/dates'
 import { isActivationTarget, isTypingTarget, modKey } from './lib/keys'
-import { EMPTY_SELECTION, click as clickSelection, prune as pruneSelection, type ClickMods, type Selection } from './lib/selection'
+import {
+  EMPTY_SELECTION, click as clickSelection, inOrder, prune as pruneSelection, type ClickMods, type Selection,
+} from './lib/selection'
 import type { CriticalScope, Filter, GanttTask, SyncDirection, SyncLogEntry } from './types'
 import './App.css'
 
@@ -107,13 +119,15 @@ export default function App() {
   const boards = useBoards()
   const board = boards.current
   const {
-    tasks, setTasks, commitTask, removeTask, updateTask, moveTask, sortTasks, setTaskParent,
+    tasks, setTasks, commitTask, removeTask, removeTasks, updateTask, updateTasks, moveTask, sortTasks, setTaskParent,
     indentTask, outdentTask, clearTasks, pending, restorePending, dropPending, prunePendingFor, storageFull,
     undo, redo, undoLabel, redoLabel,
   } = useTasks(board.id)
   const toast = useToasts()
   const { config, setConfig, clearConfig } = useClickUpConfig()
   const workspace = useWorkspaceTree(config?.token, config?.teamId)
+  const people = usePeople(config?.token, config?.teamId)
+  const listStatuses = useListStatuses(config?.token, board.listId)
   const [linkOpen, setLinkOpen] = useState(false)
   const { settings, setSettings } = useSettings()
   const [appSettingsOpen, setAppSettingsOpen] = useState(false)
@@ -174,6 +188,21 @@ export default function App() {
   const clearSelection = useCallback(() => setSelection(s => (s.ids.size ? EMPTY_SELECTION : s)), [])
   // F2 / menu Rename: the row with this id starts editing its name
   const [renameRequest, setRenameRequest] = useState<{ id: string; n: number } | null>(null)
+  // The task menu (row right-click / ⋯, bar right-click) and what it acts on
+  const [menu, setMenu] = useState<{ x: number; y: number; ids: string[]; align: 'left' | 'right' } | null>(null)
+  // A highlighted dependency path: everything off it is dimmed
+  const [pathFocus, setPathFocus] = useState<{ roots: string[]; dir: PathDirection } | null>(null)
+  const path = useMemo(
+    () => (pathFocus ? dependencyPath(tasks, pathFocus.roots, pathFocus.dir) : null),
+    [tasks, pathFocus],
+  )
+  useEffect(() => {
+    if (pathFocus && !pathFocus.roots.some(id => tree.byId.has(id))) setPathFocus(null)
+  }, [tree, pathFocus])
+  const [shiftFor, setShiftFor] = useState<string[] | null>(null)
+  const [assignFor, setAssignFor] = useState<{ ids: string[]; x: number; y: number } | null>(null)
+  // Opens the details popup with a dependency picker open
+  const [detailPicker, setDetailPicker] = useState<'pred' | 'succ' | null>(null)
   const [criticalOn, setCriticalOn] = useState(() => loadCritical().on)
   const [criticalScope, setCriticalScope] = useState<CriticalScope>(() => loadCritical().scope)
   const critical = useMemo(
@@ -381,6 +410,10 @@ export default function App() {
     setDetailTaskId(null)
     setNewTaskDraft(null)
     setSelection(EMPTY_SELECTION)
+    setPathFocus(null)
+    setMenu(null)
+    setShiftFor(null)
+    setAssignFor(null)
   }, [])
 
   const switchBoard = useCallback((id: string) => {
@@ -487,12 +520,111 @@ export default function App() {
     setNewTaskDraft(null)
   }, [newTaskDraft, commitTask, expand])
 
-  const handleRemove = useCallback((id: string) => {
-    const t = tree.byId.get(id)
-    const n = descendants(id, tree).length
-    if (t && n > 0 && !confirm(`Delete "${t.name}" and its ${n} subtask${n === 1 ? '' : 's'}?`)) return
-    removeTask(id)
-  }, [tree, removeTask])
+  // Deletes tasks with their subtasks (asks when that is more than one task),
+  // then offers an undo while nothing else was done
+  const deleteToastRef = useRef<{ id: number; label: string } | null>(null)
+  const undoRef = useRef<() => void>(() => {})
+  const deleteTasks = useCallback((ids: string[]) => {
+    const roots = ids.filter(id => tree.byId.has(id))
+    if (!roots.length) return
+    const all = new Set(roots.flatMap(id => [id, ...descendants(id, tree).map(t => t.id)]))
+    const extra = all.size - roots.length
+    if (roots.length === 1) {
+      const t = tree.byId.get(roots[0])!
+      if (extra > 0 && !confirm(`Delete "${t.name}" and its ${extra} subtask${extra === 1 ? '' : 's'}?`)) return
+      removeTask(roots[0])
+    } else {
+      if (!confirm(`Delete ${roots.length} tasks${extra ? ` and ${extra} subtask${extra === 1 ? '' : 's'}` : ''}?`)) return
+      removeTasks(roots)
+    }
+    const label = roots.length === 1 ? `Delete ${taskLabel(tree.byId.get(roots[0]))}` : `Delete ${roots.length} tasks`
+    const text = roots.length === 1 ? `Deleted ${taskLabel(tree.byId.get(roots[0]))}` : `Deleted ${all.size} tasks`
+    const id = toast.push(text, { action: { label: 'Undo', run: () => undoRef.current() } })
+    deleteToastRef.current = { id, label }
+  }, [tree, removeTask, removeTasks, toast.push])
+
+  // Moves tasks by whole days, each with what moves along in a drag (its
+  // successors and subtasks), every task once: one undo step
+  const shiftClosure = useCallback((ids: string[]) => {
+    const moved = new Set<string>()
+    for (const id of ids) {
+      moved.add(id)
+      for (const d of dragClosure(id, tasks)) moved.add(d)
+    }
+    return moved
+  }, [tasks])
+  const shiftTasks = useCallback((ids: string[], days: number, label: string) => {
+    const patches = new Map<string, Partial<GanttTask>>()
+    for (const id of shiftClosure(ids)) {
+      const t = tree.byId.get(id)
+      if (t?.start && t.end) patches.set(id, { start: shiftDays(t.start, days), end: shiftDays(t.end, days) })
+    }
+    updateTasks(patches, label)
+  }, [shiftClosure, tree, updateTasks])
+
+  // Links the tasks one after another in row order; a link that would close
+  // a loop is skipped
+  const linkAsChain = useCallback((ids: string[]) => {
+    let working = tasks
+    const deps = new Map<string, string[]>()
+    let added = 0
+    let refused = 0
+    for (let i = 1; i < ids.length; i++) {
+      const pred = ids[i - 1]
+      const succ = ids[i]
+      const why = dependencyRefusal(working, pred, succ)
+      if (why === 'Already linked') continue
+      if (why) { refused++; continue }
+      const s = working.find(t => t.id === succ)!
+      const next = [...(s.dependencies ?? []), pred]
+      deps.set(succ, next)
+      working = working.map(t => (t.id === succ ? { ...t, dependencies: next } : t))
+      added++
+    }
+    if (added) updateTasks(new Map([...deps].map(([id, d]) => [id, { dependencies: d }])), `Link ${ids.length} tasks as a chain`)
+    toast.push(
+      `${added ? `Added ${added} link${added === 1 ? '' : 's'}` : 'No new links'}${refused ? `, skipped ${refused} that would create a loop` : ''}`,
+      { kind: refused && !added ? 'error' : 'info' },
+    )
+  }, [tasks, updateTasks, toast.push])
+
+  const unlinkTasks = useCallback((ids: string[]) => {
+    const set = new Set(ids)
+    const patches = new Map<string, Partial<GanttTask>>()
+    for (const id of ids) {
+      const t = tree.byId.get(id)
+      const deps = t?.dependencies ?? []
+      if (deps.some(d => set.has(d))) patches.set(id, { dependencies: deps.filter(d => !set.has(d)) })
+    }
+    updateTasks(patches, `Unlink ${ids.length} tasks`)
+  }, [tree, updateTasks])
+
+  const setStatusOf = useCallback((ids: string[], name: string) => {
+    const s = listStatuses.statuses?.find(x => x.status === name)
+    if (!s) return
+    const label = ids.length === 1 ? `Set status of ${taskLabel(tree.byId.get(ids[0]))}` : `Set status of ${ids.length} tasks`
+    updateTasks(new Map(ids.map(id => [id, statusPatch(s)])), label)
+  }, [listStatuses.statuses, tree, updateTasks])
+
+  const setPriorityOf = useCallback((ids: string[], priority: GanttTask['priority']) => {
+    const label = ids.length === 1 ? `Set priority of ${taskLabel(tree.byId.get(ids[0]))}` : `Set priority of ${ids.length} tasks`
+    updateTasks(new Map(ids.map(id => [id, { priority }])), label)
+  }, [tree, updateTasks])
+
+  // Bulk assign: someone all the tasks have is removed from all, anyone
+  // else is added to all
+  const toggleAssigneeOf = useCallback((ids: string[], m: Person) => {
+    const ts = ids.map(id => tree.byId.get(id)).filter((t): t is GanttTask => !!t)
+    const all = ts.every(t => (t.assignees ?? []).some(a => a.id === m.id))
+    const patches = new Map<string, Partial<GanttTask>>()
+    for (const t of ts) {
+      const cur = t.assignees ?? []
+      const has = cur.some(a => a.id === m.id)
+      if (all) patches.set(t.id, { assignees: cur.filter(a => a.id !== m.id) })
+      else if (!has) patches.set(t.id, { assignees: [...cur, { id: m.id, username: m.username }] })
+    }
+    updateTasks(patches, `${all ? 'Unassign' : 'Assign'} ${m.username}`)
+  }, [tree, updateTasks])
 
   // Collapse every task that has subtasks, or expand everything
   const setAllCollapsed = useCallback((on: boolean) => {
@@ -564,10 +696,69 @@ export default function App() {
     setRenameRequest(r => ({ id, n: (r?.n ?? 0) + 1 }))
   }, [leftHidden])
 
-  const openDetail = useCallback((id: string) => {
+  const openDetail = useCallback((id: string, picker: 'pred' | 'succ' | null = null) => {
     setSelection(s => (s.ids.size === 1 && s.ids.has(id) ? s : { ids: new Set([id]), anchor: id }))
+    setDetailPicker(picker)
     setDetailTaskId(id)
   }, [])
+
+  // The menu acts on the selection when the task is part of it, else on the
+  // task alone (which becomes the selection)
+  const openMenu = useCallback((id: string, x: number, y: number, align: 'left' | 'right' = 'left') => {
+    const inSel = selection.ids.has(id)
+    if (!inSel) setSelection({ ids: new Set([id]), anchor: id })
+    setMenu({ x, y, align, ids: inSel ? inOrder(selection, rowOrder) : [id] })
+  }, [selection, rowOrder])
+
+  const menuIds = useMemo(() => new Set(menu?.ids ?? []), [menu])
+  const menuItems = useMemo(() => (menu
+    ? buildTaskMenu({
+        ids: menu.ids,
+        tasks,
+        tree,
+        statuses: listStatuses.statuses,
+        canAssign: !!config?.token && !!config.teamId,
+        dependencyWarnings: settings.board.dependencyWarnings,
+      })
+    : []), [menu, tasks, tree, listStatuses.statuses, config, settings.board.dependencyWarnings])
+
+  const runMenuAction = (action: string, ids: string[], at: { x: number; y: number }) => {
+    const first = ids[0]
+    if (action.startsWith('status:')) return setStatusOf(ids, action.slice('status:'.length))
+    if (action.startsWith('priority:')) {
+      const v = action.slice('priority:'.length)
+      return setPriorityOf(ids, v === 'none' ? undefined : (Number(v) as 1 | 2 | 3 | 4))
+    }
+    switch (action) {
+      case 'open': return openDetail(first)
+      case 'rename': return startRename(first)
+      case 'add-pred': return openDetail(first, 'pred')
+      case 'add-succ': return openDetail(first, 'succ')
+      case 'path-both':
+      case 'path-up':
+      case 'path-down':
+        return setPathFocus({ roots: ids, dir: action.slice('path-'.length) as PathDirection })
+      case 'select-path': {
+        const p = dependencyPath(tasks, ids, 'both')
+        return setSelection({ ids: p.ids, anchor: first })
+      }
+      case 'snap': {
+        const days = snapAfterPredecessors(tasks, first)
+        if (days) shiftTasks([first], days, `Start ${taskLabel(tree.byId.get(first))} after its predecessors`)
+        return
+      }
+      case 'add-subtask': return handleAddSubtask(first)
+      case 'indent': return indentTask(first)
+      case 'outdent': return outdentTask(first)
+      case 'top-level': return setTaskParent(first, undefined)
+      case 'delete': return deleteTasks(ids)
+      case 'assign': return setAssignFor({ ids, x: at.x, y: at.y })
+      case 'shift': return setShiftFor(ids)
+      case 'chain': return linkAsChain(ids)
+      case 'unlink': return unlinkTasks(ids)
+      case 'clear-selection': return clearSelection()
+    }
+  }
 
   // Undo / redo are off while a pull / push runs or waits for a dialog: its
   // results are about to be applied to the board as it is
@@ -577,6 +768,15 @@ export default function App() {
     const label = undo()
     if (label) toast.push(`Undone: ${label}`)
   }, [historyBlocked, undo, toast.push])
+  undoRef.current = doUndo
+  // A delete's "Undo" toast goes as soon as something else is the last step
+  useEffect(() => {
+    const t = deleteToastRef.current
+    if (t && undoLabel !== t.label) {
+      toast.dismiss(t.id)
+      deleteToastRef.current = null
+    }
+  }, [undoLabel, toast.dismiss])
   const doRedo = useCallback(() => {
     if (historyBlocked) return
     const label = redo()
@@ -585,7 +785,7 @@ export default function App() {
 
   // Shortcuts on the board, unless a dialog is open or a field has focus
   const dialogOpen = settingsOpen || appSettingsOpen || exportOpen || !!detailTaskId || !!newTaskDraft
-    || !!pendingSync || syncLogOpen || pendingOpen || linkOpen
+    || !!pendingSync || syncLogOpen || pendingOpen || linkOpen || !!menu || !!shiftFor || !!assignFor
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyRef.current = (e: KeyboardEvent) => {
     if (route.view !== 'board' || dialogOpen || e.defaultPrevented) return
@@ -604,9 +804,22 @@ export default function App() {
       e.preventDefault()
       setLeftHidden(!leftHidden)
     } else if (e.key === 'Escape' && !modKey(e)) {
-      if (selection.ids.size) {
+      // A highlighted path goes first, then the selection
+      if (pathFocus) {
+        e.preventDefault()
+        setPathFocus(null)
+      } else if (selection.ids.size) {
         e.preventDefault()
         clearSelection()
+      }
+    } else if (key === 'p' && !modKey(e) && !e.altKey && !e.shiftKey) {
+      e.preventDefault()
+      if (pathFocus) setPathFocus(null)
+      else if (selection.ids.size) setPathFocus({ roots: inOrder(selection, rowOrder), dir: 'both' })
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && !modKey(e) && !isActivationTarget(el)) {
+      if (selection.ids.size) {
+        e.preventDefault()
+        deleteTasks(inOrder(selection, rowOrder))
       }
     } else if (e.key === 'Enter' && !modKey(e) && !e.shiftKey && !isActivationTarget(el)) {
       if (selection.ids.size === 1) {
@@ -634,6 +847,7 @@ export default function App() {
   )
 
   return (
+    <PeopleContext.Provider value={people.byId}>
     <div className="app">
       <header className="app__header">
         <span className="app__logo">
@@ -779,13 +993,10 @@ export default function App() {
             onAdd={handleAddTask}
             onClear={() => { if (confirm('Remove all tasks?')) clearTasks() }}
             onSort={sortTasks}
-            onRemove={handleRemove}
             onUpdate={handleTaskUpdate}
             onMove={moveTask}
             onIndent={indentTask}
             onOutdent={outdentTask}
-            onMakeTopLevel={id => setTaskParent(id, undefined)}
-            onAddSubtask={handleAddSubtask}
             onToggleCollapsed={toggleCollapsed}
             onSetAllCollapsed={setAllCollapsed}
             onOpenDetail={openDetail}
@@ -794,6 +1005,9 @@ export default function App() {
             onSelect={selectTask}
             onClearSelection={clearSelection}
             renameRequest={renameRequest}
+            onOpenMenu={openMenu}
+            menuTaskIds={menuIds}
+            pathIds={path?.ids}
             criticalIds={critical.taskIds}
             settings={settings}
             statusSource={statusSource}
@@ -834,6 +1048,16 @@ export default function App() {
             onClearSelection={clearSelection}
             onOpenDetail={openDetail}
             settings={settings}
+            onOpenMenu={(id, x, y) => openMenu(id, x, y)}
+            path={path && pathFocus ? {
+              ids: path.ids,
+              edges: path.edges,
+              info: {
+                label: pathFocus.roots.length === 1 ? taskLabel(tree.byId.get(pathFocus.roots[0])) : `${pathFocus.roots.length} tasks`,
+                count: path.ids.size,
+                onClear: () => setPathFocus(null),
+              },
+            } : undefined}
             onAddTask={handleAddTask}
             filterInfo={filters.length ? {
               shown: filteredTasks.length,
@@ -856,6 +1080,51 @@ export default function App() {
       )}
       </>)}
       <Toasts toasts={toast.toasts} onDismiss={toast.dismiss} />
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          align={menu.align}
+          items={menuItems}
+          label={menu.ids.length === 1 ? `Actions for ${tree.byId.get(menu.ids[0])?.name ?? 'task'}` : `Actions for ${menu.ids.length} tasks`}
+          onAction={id => runMenuAction(id, menu.ids, menu)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {shiftFor && (
+        <ShiftDatesDialog
+          count={shiftFor.length}
+          alongCount={() => shiftClosure(shiftFor).size - shiftFor.length}
+          onShift={days => {
+            shiftTasks(shiftFor, days, `Shift ${shiftFor.length === 1 ? taskLabel(tree.byId.get(shiftFor[0])) : `${shiftFor.length} tasks`} by ${days} day${Math.abs(days) === 1 ? '' : 's'}`)
+            setShiftFor(null)
+          }}
+          onClose={() => setShiftFor(null)}
+        />
+      )}
+      {assignFor && (() => {
+        const ts = assignFor.ids.map(id => tree.byId.get(id)).filter((t): t is GanttTask => !!t)
+        const counts = new Map<number, number>()
+        for (const t of ts) for (const a of t.assignees ?? []) counts.set(a.id, (counts.get(a.id) ?? 0) + 1)
+        const everyone = ts[0]?.assignees?.filter(a => counts.get(a.id) === ts.length) ?? []
+        const partial = new Set([...counts].filter(([, n]) => n < ts.length).map(([id]) => id))
+        return (
+          <div
+            className="floating-picker"
+            style={{ left: Math.min(assignFor.x, window.innerWidth - 296), top: Math.min(assignFor.y, window.innerHeight - 340) }}
+          >
+            <AssigneePicker
+              members={people.list}
+              loading={people.loading}
+              error={people.error}
+              assigned={everyone}
+              partial={partial}
+              onToggle={m => toggleAssigneeOf(assignFor.ids, m)}
+              onClose={() => setAssignFor(null)}
+            />
+          </div>
+        )
+      })()}
       <ClickUpSettings
         open={settingsOpen}
         config={config}
@@ -961,6 +1230,8 @@ export default function App() {
             clickupListId={board.listId}
             clickupSpaceId={board.spaceId}
             milestoneTag={milestoneTag}
+            people={people}
+            initialPicker={detailPicker}
           />
         ) : null
       })()}
@@ -979,8 +1250,10 @@ export default function App() {
           clickupListId={board.listId}
           clickupSpaceId={board.spaceId}
           milestoneTag={milestoneTag}
+          people={people}
         />
       )}
     </div>
+    </PeopleContext.Provider>
   )
 }

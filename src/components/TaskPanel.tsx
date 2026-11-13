@@ -7,8 +7,7 @@ import { TaskRow } from './TaskRow'
 import { FilterBar, type StatusSource } from './FilterBar'
 import { GANTT_HEADER_HEIGHT } from '../constants'
 import {
-  ancestors, canBecomeTopLevel, canOutdent, indentTarget, moveTarget, TOP_LEVEL_BLOCKED,
-  type DropPosition, type Tree, type TreeRow,
+  canOutdent, indentTarget, moveTarget, type DropPosition, type Tree, type TreeRow,
 } from '../lib/tree'
 import type { Settings } from '../lib/settings'
 
@@ -24,13 +23,10 @@ interface Props {
   onAdd: () => void
   onClear: () => void
   onSort: () => void
-  onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<GanttTask>) => void
   onMove: (id: string, targetId: string, pos: DropPosition) => void
   onIndent: (id: string) => void
   onOutdent: (id: string) => void
-  onMakeTopLevel: (id: string) => void
-  onAddSubtask: (parentId: string) => void
   onToggleCollapsed: (id: string) => void
   onSetAllCollapsed: (collapsed: boolean) => void
   onOpenDetail: (id: string) => void
@@ -43,13 +39,17 @@ interface Props {
   onSelect: (id: string, mods: ClickMods) => void
   onClearSelection: () => void
   renameRequest: { id: string; n: number } | null
+  onOpenMenu: (id: string, x: number, y: number, align: 'left' | 'right') => void
+  menuTaskIds: ReadonlySet<string> // the tasks the open menu acts on
+  pathIds?: ReadonlySet<string> // a highlighted path: rows outside it are dimmed
 }
 
 export function TaskPanel({
   rows, tree, matchCount, allTasks, filters, setFilters, matchMode, setMatchMode,
-  onAdd, onClear, onSort, onRemove, onUpdate, onMove, onIndent, onOutdent, onMakeTopLevel,
-  onAddSubtask, onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
+  onAdd, onClear, onSort, onUpdate, onMove, onIndent, onOutdent,
+  onToggleCollapsed, onSetAllCollapsed, onOpenDetail, listRef, criticalIds, settings,
   statusSource, onHide, selectedIds, onSelect, onClearSelection, renameRequest,
+  onOpenMenu, menuTaskIds, pathIds,
 }: Props) {
   const dragIdRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; pos: DropPosition } | null>(null)
@@ -154,23 +154,19 @@ export function TaskPanel({
         )}
         {rows.map(row => {
           const { task } = row
-          const chain = ancestors(task.id, tree)
-          const root = chain[chain.length - 1]
           return (
             <TaskRow
               key={task.id}
               row={row}
               showToggles={hasParents}
               onUpdate={patch => onUpdate(task.id, patch)}
-              onRemove={() => onRemove(task.id)}
               onOpenDetail={() => onOpenDetail(task.id)}
               onToggleCollapsed={() => onToggleCollapsed(task.id)}
-              onAddSubtask={() => onAddSubtask(task.id)}
               onIndent={indentTarget(tree, task.id) ? () => onIndent(task.id) : undefined}
               onOutdent={canOutdent(tree, task.id) ? () => onOutdent(task.id) : undefined}
-              onMakeTopLevel={chain.length >= 2 && moveTarget(tree, task.id, root, 'after')
-                ? () => onMakeTopLevel(task.id) : undefined}
-              topLevelBlocked={chain.length > 0 && !canBecomeTopLevel(task) ? TOP_LEVEL_BLOCKED : undefined}
+              onOpenMenu={(x, y, align) => onOpenMenu(task.id, x, y, align)}
+              menuOpen={menuTaskIds.has(task.id)}
+              dimmed={!!pathIds && !pathIds.has(task.id)}
               onDragStart={() => { dragIdRef.current = task.id }}
               onDragOver={e => handleDragOver(e, row)}
               onDrop={handleDrop}
