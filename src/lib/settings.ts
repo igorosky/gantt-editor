@@ -1,7 +1,8 @@
 // User settings: which task warnings apply, the week layout, which statuses
 // count as backlog and where backlog tasks are left out, the portfolio
 // thresholds and the board look. Pure; the defaults reproduce the behaviour
-// from before settings existed, except board.statusColors (on). Persisted by
+// from before settings existed, except the board looks (status colors,
+// dependency warnings, profile pictures: on). Persisted by
 // hooks/useSettings.
 
 import type { GanttTask } from '../types'
@@ -50,7 +51,20 @@ export interface Settings {
   board: {
     // Gantt bars filled with the task's status color, a stripe in the task list
     statusColors: boolean
+    // A successor starting before its predecessor ends: red dashed arrow and a
+    // row warning
+    dependencyWarnings: boolean
+    // ClickUp profile pictures in the places that had none before (the task
+    // popup, pickers and filters always show them)
+    avatars: AvatarPlaces
   }
+}
+
+export interface AvatarPlaces {
+  rows: boolean // the task list
+  bars: boolean // next to gantt bars
+  tooltip: boolean // the bar hover tooltip
+  portfolio: boolean // portfolio People tab and workload legends
 }
 
 export const DEFAULT_DOD_KEYWORDS = ['DoD', 'Definition of Done']
@@ -75,8 +89,12 @@ export const DEFAULT_SETTINGS: Settings = {
     amberUnscheduledShare: 0.25,
   },
   milestones: { as: 'type', tag: 'milestone' },
-  // On by default, unlike the rest: added later as a new look, not a rule
-  board: { statusColors: true },
+  // On by default, unlike the rest: added later as new looks, not rules
+  board: {
+    statusColors: true,
+    dependencyWarnings: true,
+    avatars: { rows: true, bars: true, tooltip: true, portfolio: true },
+  },
 }
 
 /* ------------------------------------------------------------- normalize */
@@ -123,6 +141,7 @@ export function normalizeSettings(raw: unknown): Settings {
   const ru = isObj(r.rules) ? r.rules : {}
   const ms = isObj(r.milestones) ? r.milestones : {}
   const bd = isObj(r.board) ? r.board : {}
+  const av = isObj(bd.avatars) ? bd.avatars : {}
 
   const keywords = cleanNames(w.dodKeywords)
   const workdays = weekdays(c.workdays)
@@ -164,6 +183,13 @@ export function normalizeSettings(raw: unknown): Settings {
     },
     board: {
       statusColors: bool(bd.statusColors, d.board.statusColors),
+      dependencyWarnings: bool(bd.dependencyWarnings, d.board.dependencyWarnings),
+      avatars: {
+        rows: bool(av.rows, d.board.avatars.rows),
+        bars: bool(av.bars, d.board.avatars.bars),
+        tooltip: bool(av.tooltip, d.board.avatars.tooltip),
+        portfolio: bool(av.portfolio, d.board.avatars.portfolio),
+      },
     },
   }
 }

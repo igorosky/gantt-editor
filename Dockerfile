@@ -1,8 +1,9 @@
 # --- build stage ---
-FROM node:20-alpine AS builder
+# dist is static files: build once on the native platform for every target
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 

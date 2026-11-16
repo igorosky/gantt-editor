@@ -73,7 +73,9 @@ export default class Milestone extends Bar {
         // 'big' also stops update_label_position_on_horizontal_scroll from
         // sliding the label into the diamond.
         label.classList.add('big');
-        label.setAttribute('x', this.$bar.getEndX() + 10);
+        // Past the connector dot when there is one
+        label.setAttribute('x', this.$bar.getEndX() + (this.$connect ? 18 : 10));
+        this.update_avatars_position();
     }
 
     compute_duration() {
@@ -85,15 +87,9 @@ export default class Milestone extends Bar {
     }
 
     compute_start_end_date() {
-        const { column_width, step, unit } = this.gantt.config;
         const centre = this.$bar.getX() + this.$bar.getWidth() / 2;
-        const x_in_units = (centre - this.day_width() / 2) / column_width;
-        // Rounded as in Bar.compute_start_end_date (parseInt would truncate)
-        const date = date_utils.add(
-            this.gantt.gantt_start,
-            Math.round(x_in_units * step),
-            unit,
-        );
+        // Rounded (and month-exact) through the fork's x_to_date
+        const date = this.gantt.x_to_date(centre - this.day_width() / 2);
         return { new_start_date: date, new_end_date: date };
     }
 

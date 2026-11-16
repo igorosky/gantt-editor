@@ -218,6 +218,57 @@ describe('pushToClickUp', () => {
     ])
   })
 
+  it('a new task keeps ClickUp\'s default status without an extra call', async () => {
+    const calls = stubClickUp()
+    const ok = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const res = await ok(url, init)
+      if (init?.method !== 'POST') return res
+      const body = await res.json() as RemoteTask
+      return new Response(JSON.stringify({ ...body, status: { status: 'to do', color: '#888', type: 'open' } }), { status: 200 })
+    }))
+    const { patches, entries } = await pushToClickUp(CONFIG, [local('n', { name: 'N', status: 'To Do' })], [])
+    expect(writes(calls).map(c => c.method)).toEqual(['POST'])
+    expect(entries.map(e => e.kind)).toEqual(['created'])
+    expect(patches.get('n')?.syncBase?.status).toBe('to do')
+  })
+
+  it('a status picked on a new task follows the create; the base records it', async () => {
+    const calls = stubClickUp()
+    const ok = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const res = await ok(url, init)
+      if (init?.method !== 'POST') return res
+      const body = await res.json() as RemoteTask
+      return new Response(JSON.stringify({ ...body, status: { status: 'to do', color: '#888', type: 'open' } }), { status: 200 })
+    }))
+    const { patches, entries } = await pushToClickUp(
+      CONFIG, [local('n', { name: 'N', status: 'in progress', statusColor: '#55e', statusType: 'custom' })], [],
+    )
+    expect(writes(calls).map(c => [c.method, c.path, c.body?.status])).toEqual([
+      ['POST', '/list/L/task', undefined],
+      ['PUT', '/task/new1', 'in progress'],
+    ])
+    expect(entries.map(e => e.kind)).toEqual(['created'])
+    expect(patches.get('n')?.syncBase?.status).toBe('in progress')
+  })
+
+  it('a failed status update after a create is logged and leaves ClickUp\'s status agreed', async () => {
+    stubClickUp()
+    const ok = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ err: 'Status not found' }), { status: 400 })
+      const res = await ok(url, init)
+      if (init?.method !== 'POST') return res
+      const body = await res.json() as RemoteTask
+      return new Response(JSON.stringify({ ...body, status: { status: 'to do', color: '#888', type: 'open' } }), { status: 200 })
+    }))
+    const { patches, entries } = await pushToClickUp(CONFIG, [local('n', { name: 'N', status: 'gone' })], [])
+    expect(entries.map(e => e.kind)).toEqual(['created', 'error'])
+    expect(entries[1].detail).toMatch(/^Status "gone" failed/)
+    expect(patches.get('n')).toMatchObject({ clickupId: 'new1', syncBase: { status: 'to do' } })
+  })
+
   it('never sends a null parent; a local un-nesting is reported instead', async () => {
     const calls = stubClickUp()
     const { entries } = await pushToClickUp(

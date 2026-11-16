@@ -1,7 +1,6 @@
-import type { TaskWarning } from '../lib/warnings'
-
 interface Props {
-  warnings: TaskWarning[]
+  // Content warnings (lib/warnings) and the board's own late-start note
+  warnings: Array<{ message: string }>
 }
 
 export function TaskWarnings({ warnings }: Props) {

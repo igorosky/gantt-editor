@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Assignee, GanttTask, Tag, TaskType } from '../types'
-import { getListStatuses, getSpaceTags, listTeamMembers, type ClickUpStatus, type TeamMember } from '../lib/clickup'
+import { getSpaceTags, type ClickUpStatus } from '../lib/clickup'
+import { fetchListStatuses } from '../hooks/useListStatuses'
+import type { People } from '../hooks/usePeople'
+import { Avatar, type Person } from './Avatar'
 import { isMilestone, typeChangePatch } from '../utils'
 import { buildTree, canBecomeTopLevel, subtreeSpan, TOP_LEVEL_BLOCKED } from '../lib/tree'
 import { isDone } from '../lib/portfolio'
@@ -11,6 +14,9 @@ import { AssigneePicker } from './AssigneePicker'
 import { TagPicker } from './TagPicker'
 import { DatePicker } from './DatePicker'
 import { ParentPicker } from './ParentPicker'
+import { TaskSearchPicker } from './TaskSearchPicker'
+import { refusedPredecessors, refusedSuccessors } from '../lib/depGraph'
+import { defaultStatus, statusPatch } from '../lib/statuses'
 
 interface Props {
   task: GanttTask
@@ -21,7 +27,10 @@ interface Props {
   onSetParent: (parentId: string | undefined) => void
   onOpenTask?: (id: string) => void
   onAddSubtask?: () => void
-  onCommit?: () => void
+  // Create mode: the new task's successors are kept here until it exists
+  onCommit?: (successors: string[]) => void
+  // Existing task: makes `id` depend on this task, or not
+  onSetSuccessor?: (id: string, on: boolean) => void
   isCreateMode?: boolean
   clickupToken?: string
   clickupTeamId?: string
@@ -30,6 +39,8 @@ interface Props {
   // The ClickUp tag that marks a milestone, when milestones are stored that
   // way: picking it sets the type instead of adding a tag
   milestoneTag?: string
+  people?: People // workspace members (ClickUp connected)
+  initialPicker?: 'pred' | 'succ' | null // open with this dependency picker
 }
 
 // Keep in sync with --milestone in App.css and --g-milestone-color in the gantt theme
@@ -42,22 +53,6 @@ const PRIORITIES: Record<number, { label: string; color: string }> = {
   4: { label: 'Low', color: '#94a3b8' },
 }
 
-
-function getInitials(name: string): string {
-  return name
-    .split(/[\s._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(w => w[0].toUpperCase())
-    .join('')
-}
-
-function avatarColor(name: string): string {
-  const colors = ['#7c85f5', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff
-  return colors[Math.abs(h) % colors.length]
-}
 
 function PriorityPill({ value, onChange }: { value: GanttTask['priority']; onChange: (v: GanttTask['priority']) => void }) {
   const [open, setOpen] = useState(false)
@@ -192,7 +187,7 @@ function StatusSelector({
   useEffect(() => {
     if (!canEdit || statuses.length > 0 || loading) return
     setLoading(true)
-    getListStatuses(token!, listId!)
+    fetchListStatuses(token!, listId!)
       .then(s => { setStatuses(s); setError(null) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
@@ -266,21 +261,23 @@ const fmtSpan = (s?: Date, e?: Date): string =>
   s && e && !sameDay(s, e) ? `${fmtShort(s)} - ${fmtShort(e)}` : s || e ? fmtShort((e ?? s)!) : 'no dates'
 
 export function TaskDetailPopup({
-  task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, isCreateMode,
-  clickupToken, clickupTeamId, clickupListId, clickupSpaceId, milestoneTag,
+  task, allTasks, onClose, onUpdate, onSetParent, onOpenTask, onAddSubtask, onCommit, onSetSuccessor, isCreateMode,
+  clickupToken, clickupListId, clickupSpaceId, milestoneTag, people, initialPicker,
 }: Props) {
   const [nameDraft, setNameDraft] = useState(task.name)
   const [descDraft, setDescDraft] = useState(task.description ?? '')
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [members, setMembers] = useState<TeamMember[]>([])
-  const [membersLoading, setMembersLoading] = useState(false)
-  const [fetchError, setFetchError] = useState<string | null>(null)
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
   const [spaceTags, setSpaceTags] = useState<Tag[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
   const [parentPickerOpen, setParentPickerOpen] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  // Predecessor / successor search open
+  const [depPicker, setDepPicker] = useState<'pred' | 'succ' | null>(initialPicker ?? null)
+  useEffect(() => { if (initialPicker) setDepPicker(initialPicker) }, [initialPicker, task.id])
+  // Create mode: successors of the task that does not exist yet
+  const [newSuccessors, setNewSuccessors] = useState<string[]>([])
   const titleInputRef = useRef<HTMLInputElement>(null)
   // The draft as it was opened (App remounts the popup for every new draft)
   const initialRef = useRef(task)
@@ -310,7 +307,57 @@ export function TaskDetailPopup({
     draftChanged(initialRef.current, task)
     || nameDraft.trim() !== task.name.trim()
     || descDraft.trim() !== (task.description ?? '').trim()
+    || newSuccessors.length > 0
   )
+
+  // A new task on a linked board starts in the list's first status (what
+  // ClickUp would give it). Usually the board already put it in the draft;
+  // if the statuses arrive after the popup opened, the draft as opened is
+  // re-based too, so the default alone never counts as an edit.
+  const taskRef = useRef(task)
+  taskRef.current = task
+  useEffect(() => {
+    if (!isCreateMode || task.status || !clickupToken || !clickupListId) return
+    let live = true
+    fetchListStatuses(clickupToken, clickupListId).then(list => {
+      const s = defaultStatus(list)
+      if (!live || !s || taskRef.current.status) return
+      const patch = statusPatch(s)
+      initialRef.current = { ...initialRef.current, ...patch }
+      onUpdate(patch)
+    }).catch(() => { /* no statuses: the draft stays without one */ })
+    return () => { live = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The board as it would be with this task (a draft is not on it yet, nor
+  // are its buffered successors' links), for the loop checks of the pickers
+  const graph = useMemo(() => {
+    if (!isCreateMode) return allTasks.map(t => (t.id === task.id ? task : t))
+    const after = new Set(newSuccessors)
+    return [
+      ...allTasks.map(t => (after.has(t.id) ? { ...t, dependencies: [...(t.dependencies ?? []), task.id] } : t)),
+      task,
+    ]
+  }, [allTasks, task, isCreateMode, newSuccessors])
+  const refusedPreds = useMemo(() => (depPicker === 'pred' ? refusedPredecessors(graph, task.id) : new Map()), [graph, task.id, depPicker])
+  const refusedSuccs = useMemo(() => (depPicker === 'succ' ? refusedSuccessors(graph, task.id) : new Map()), [graph, task.id, depPicker])
+  const successors = isCreateMode
+    ? newSuccessors.map(id => allTasks.find(t => t.id === id)).filter((t): t is GanttTask => !!t)
+    : allTasks.filter(t => (t.dependencies ?? []).includes(task.id))
+
+  const addPredecessor = (id: string) => {
+    onUpdate({ dependencies: [...(task.dependencies ?? []), id] })
+    setDepPicker(null)
+  }
+  const addSuccessor = (id: string) => {
+    if (isCreateMode) setNewSuccessors(s => (s.includes(id) ? s : [...s, id]))
+    else onSetSuccessor?.(id, true)
+    setDepPicker(null)
+  }
+  const removeSuccessor = (id: string) => {
+    if (isCreateMode) setNewSuccessors(s => s.filter(x => x !== id))
+    else onSetSuccessor?.(id, false)
+  }
 
   const requestClose = () => {
     if (dirty) setConfirmDiscard(true)
@@ -350,28 +397,19 @@ export function TaskDetailPopup({
     onUpdate({ dependencies: (task.dependencies ?? []).filter(d => d !== depId) })
   }
 
-  const openPicker = async () => {
+  const openPicker = () => {
     setPickerOpen(true)
-    if (members.length === 0 && !membersLoading && !fetchError && clickupToken && clickupTeamId) {
-      setMembersLoading(true)
-      try {
-        setMembers(await listTeamMembers(clickupToken, clickupTeamId))
-        setFetchError(null)
-      } catch (e) {
-        setFetchError(String(e))
-      } finally {
-        setMembersLoading(false)
-      }
-    }
+    // A failed or never-made load tries again
+    if (people && !people.list.length && !people.loading) people.reload()
   }
 
-  const toggleAssignee = (m: TeamMember) => {
+  const toggleAssignee = (m: Person) => {
     const cur = task.assignees ?? []
     const exists = cur.some(a => a.id === m.id)
     onUpdate({
       assignees: exists
         ? cur.filter(a => a.id !== m.id)
-        : [...cur, { id: m.id, username: m.username ?? m.email }],
+        : [...cur, { id: m.id, username: m.username }],
     })
   }
 
@@ -487,7 +525,7 @@ export function TaskDetailPopup({
               className="tdp-title"
               value={nameDraft}
               onChange={e => setNameDraft(e.target.value)}
-              onBlur={() => { const v = nameDraft.trim(); onUpdate({ name: v || task.name }) }}
+              onBlur={() => { const v = nameDraft.trim() || task.name; if (v !== task.name) onUpdate({ name: v }) }}
               onKeyDown={e => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                 if (e.key === 'Escape') setNameDraft(task.name)
@@ -536,9 +574,7 @@ export function TaskDetailPopup({
             <div className="tdp-value tdp-assignees-wrap">
               {(task.assignees ?? []).map(a => (
                 <span key={a.id !== -1 ? a.id : a.username} className="tdp-assignee-chip">
-                  <span className="tdp-av" style={{ background: avatarColor(a.username) }}>
-                    {getInitials(a.username)}
-                  </span>
+                  <Avatar person={a} size={20} title="" />
                   {a.username}
                   <span
                     className="tdp-assignee-x"
@@ -560,9 +596,9 @@ export function TaskDetailPopup({
               )}
               {pickerOpen && (
                 <AssigneePicker
-                  members={members}
-                  loading={membersLoading}
-                  error={fetchError}
+                  members={people?.list ?? []}
+                  loading={!!people?.loading}
+                  error={people?.error ?? null}
                   assigned={task.assignees ?? []}
                   onToggle={toggleAssignee}
                   onClose={() => setPickerOpen(false)}
@@ -639,16 +675,69 @@ export function TaskDetailPopup({
               )}
             </div>
 
-            {/* Dependencies */}
+            {/* Dependencies: predecessors and successors */}
             <div className="tdp-label">Depends on</div>
-            <div className="tdp-value">
-              {deps.length === 0 && <span className="tdp-empty">—</span>}
+            <div className="tdp-value tdp-deps-wrap">
+              {deps.length === 0 && <span className="tdp-empty">-</span>}
               {deps.map(d => (
                 <span key={d.id} className="tdp-dep-chip">
-                  {d.name}
-                  <span className="tdp-dep-x" onClick={() => removeDep(d.id)} title="Remove dependency">×</span>
+                  {onOpenTask && !isCreateMode
+                    ? <button type="button" className="tdp-link" onClick={() => onOpenTask(d.id)} title="Open this task">{d.name}</button>
+                    : d.name}
+                  <span className="tdp-dep-x" onClick={() => removeDep(d.id)} title="Remove dependency" role="button" aria-label={`Remove ${d.name} from predecessors`}>×</span>
                 </span>
               ))}
+              <button
+                type="button"
+                className="tdp-add-assignee-btn"
+                onClick={e => { e.stopPropagation(); setDepPicker('pred') }}
+                aria-label="Add predecessor"
+              >
+                + Add
+              </button>
+              {depPicker === 'pred' && (
+                <TaskSearchPicker
+                  tasks={allTasks}
+                  refused={refusedPreds}
+                  onPick={addPredecessor}
+                  onClose={() => setDepPicker(null)}
+                  placeholder="Find a predecessor…"
+                  label="Add predecessor"
+                />
+              )}
+            </div>
+
+            <div className="tdp-label">Blocks</div>
+            <div className="tdp-value tdp-deps-wrap">
+              {successors.length === 0 && <span className="tdp-empty">-</span>}
+              {successors.map(d => (
+                <span key={d.id} className="tdp-dep-chip">
+                  {onOpenTask && !isCreateMode
+                    ? <button type="button" className="tdp-link" onClick={() => onOpenTask(d.id)} title="Open this task">{d.name}</button>
+                    : d.name}
+                  <span className="tdp-dep-x" onClick={() => removeSuccessor(d.id)} title="Remove dependency" role="button" aria-label={`Remove ${d.name} from successors`}>×</span>
+                </span>
+              ))}
+              {(isCreateMode || onSetSuccessor) && (
+                <button
+                  type="button"
+                  className="tdp-add-assignee-btn"
+                  onClick={e => { e.stopPropagation(); setDepPicker('succ') }}
+                  aria-label="Add successor"
+                >
+                  + Add
+                </button>
+              )}
+              {depPicker === 'succ' && (
+                <TaskSearchPicker
+                  tasks={allTasks}
+                  refused={refusedSuccs}
+                  onPick={addSuccessor}
+                  onClose={() => setDepPicker(null)}
+                  placeholder="Find a successor…"
+                  label="Add successor"
+                />
+              )}
             </div>
           </div>
 
@@ -705,7 +794,7 @@ export function TaskDetailPopup({
               placeholder="Add a description…"
               value={descDraft}
               onChange={e => setDescDraft(e.target.value)}
-              onBlur={() => onUpdate({ description: descDraft })}
+              onBlur={() => { if (descDraft !== (task.description ?? '')) onUpdate({ description: descDraft }) }}
             />
           </div>
         </div>
@@ -718,7 +807,7 @@ export function TaskDetailPopup({
               onClick={() => {
                 const trimmed = nameDraft.trim()
                 if (trimmed && trimmed !== task.name) onUpdate({ name: trimmed })
-                onCommit?.()
+                onCommit?.(newSuccessors)
               }}
             >
               {ms ? 'Create milestone' : 'Create task'}

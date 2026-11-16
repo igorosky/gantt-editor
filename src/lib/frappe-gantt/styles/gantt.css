@@ -179,7 +179,10 @@
         position: absolute;
     }
 
+    /* Local fix: the today line is an HTML overlay above the bars; without
+       this it swallowed clicks and right-clicks where it crosses a bar */
     & .current-highlight {
+        pointer-events: none;
         position: absolute;
         background: var(--g-today-highlight);
         width: 1px;

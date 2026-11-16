@@ -75,6 +75,19 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ board: { statusColors: 'no' } }).board.statusColors).toBe(true)
     expect(normalizeSettings({ board: 7 }).board.statusColors).toBe(true)
   })
+
+  it('board looks added later default on and keep stored choices', () => {
+    const d = normalizeSettings({})
+    expect(d.board.dependencyWarnings).toBe(true)
+    expect(d.board.avatars).toEqual({ rows: true, bars: true, tooltip: true, portfolio: true })
+    const s = normalizeSettings({ board: { statusColors: false, dependencyWarnings: false, avatars: { bars: false, rows: 'x' } } })
+    expect(s.board).toEqual({
+      statusColors: false,
+      dependencyWarnings: false,
+      avatars: { rows: true, bars: false, tooltip: true, portfolio: true },
+    })
+    expect(normalizeSettings({ board: { avatars: [] } }).board.avatars).toEqual(DEFAULT_SETTINGS.board.avatars)
+  })
 })
 
 describe('backlog', () => {

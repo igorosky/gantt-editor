@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GanttTask } from '../types'
 import { buildTree, descendants, flattenTree } from '../lib/tree'
+import { fuzzyFilter } from '../lib/fuzzy'
 
 interface Props {
   tasks: GanttTask[] // every task on the board
@@ -40,8 +41,9 @@ export function ParentPicker({ tasks, task, onPick, onClose }: Props) {
     return flattenTree(tasks).filter(r => !blocked.has(r.task.id))
   }, [tasks, task.id])
 
-  const q = search.trim().toLowerCase()
-  const shown = q ? rows.filter(r => r.task.name.toLowerCase().includes(q)) : rows
+  const q = search.trim()
+  // Best matches first; without a query the indented tree
+  const shown = q ? fuzzyFilter(rows, q, r => r.task.name).map(r => r.item) : rows
 
   return (
     <div ref={ref} className="tdp-picker tdp-parent-picker" onClick={e => e.stopPropagation()}>

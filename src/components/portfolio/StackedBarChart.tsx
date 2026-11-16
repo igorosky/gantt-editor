@@ -1,3 +1,4 @@
+import { ProfilePicture, personIdOfKey } from '../Avatar'
 import { useMemo } from 'react'
 import { niceTicks, Tooltip, useElementWidth, useTooltip } from './shared'
 
@@ -161,13 +162,15 @@ function roundedTop(x: number, y: number, w: number, h: number, r: number): stri
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`
 }
 
-export function Legend({ series }: { series: Series[] }) {
+// `pictures`: series keyed by person ("u:<id>") show their profile picture
+export function Legend({ series, pictures = false }: { series: Series[]; pictures?: boolean }) {
   if (series.length < 2) return null
   return (
     <div className="pf-legend">
       {series.map(s => (
         <span key={s.key} className="pf-legend__item">
           <span className="pf-legend__swatch" style={{ background: s.color }} />
+          {pictures && <ProfilePicture id={personIdOfKey(s.key)} size={16} fallback={null} />}
           {s.label}
         </span>
       ))}

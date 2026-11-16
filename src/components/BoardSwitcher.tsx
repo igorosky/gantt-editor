@@ -20,6 +20,7 @@ interface Props {
   onRemove: (id: string) => void
   onLink: () => void
   onConnect: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 function syncedLabel(b: BoardRef, now: number): string {
@@ -32,7 +33,7 @@ function syncedLabel(b: BoardRef, now: number): string {
 // pull). Footer: new local board, link the current local board to a list.
 export function BoardSwitcher({
   boards, current, connected, workspace, blocked,
-  onSwitch, onOpenList, onNewLocal, onRename, onRemove, onLink, onConnect,
+  onSwitch, onOpenList, onNewLocal, onRename, onRemove, onLink, onConnect, onOpenChange,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -48,7 +49,8 @@ export function BoardSwitcher({
     const onDown = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    // Handled here, so the board's own Escape (clear the selection) skips it
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false) } }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -58,6 +60,10 @@ export function BoardSwitcher({
   }, [open])
 
   useEffect(() => { if (blocked) setOpen(false) }, [blocked])
+
+  // The board's shortcuts stay off while the list is open
+  useEffect(() => { onOpenChange?.(open) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onOpenChange?.(false), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const now = useMemo(() => Date.now(), [open]) // eslint-disable-line react-hooks/exhaustive-deps
   const q = query.trim().toLowerCase()
